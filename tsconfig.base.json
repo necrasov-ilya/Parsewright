@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "declaration": true,
+    "sourceMap": true,
+    "baseUrl": ".",
+    "paths": {
+      "@parsewright/capture": ["packages/capture/src/index.ts"],
+      "@parsewright/core": ["packages/core/src/index.ts"],
+      "@parsewright/manifest": ["packages/manifest/src/index.ts"],
+      "@parsewright/model-gateway": ["packages/model-gateway/src/index.ts"],
+      "@parsewright/runner": ["packages/runner/src/index.ts"],
+      "@parsewright/storage": ["packages/storage/src/index.ts"],
+      "@parsewright/validator": ["packages/validator/src/index.ts"]
+    }
+  }
+}

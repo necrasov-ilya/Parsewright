@@ -1,0 +1,24 @@
+{
+  "name": "parsewright",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Turn website requests into live data, reusable parsers, validation, and MCP-ready tools.",
+  "type": "module",
+  "scripts": {
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "cli": "pnpm --filter @parsewright/cli dev",
+    "mcp": "pnpm --filter @parsewright/mcp dev",
+    "sidecar": "pnpm --filter @parsewright/sidecar dev",
+    "studio:web": "pnpm --filter @parsewright/studio-frontend dev"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsup": "^8.3.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  },
+  "packageManager": "pnpm@11.7.0"
+}

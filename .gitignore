@@ -1,1 +1,10 @@
 agentDiscuss/
+node_modules/
+dist/
+build/
+.turbo/
+.wails/
+*.log
+*.exe
+*.md5
+projects/

@@ -1,0 +1,30 @@
+{
+  "name": "@parsewright/cli",
+  "version": "0.0.0",
+  "type": "module",
+  "bin": {
+    "parsewright": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts",
+    "dev": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@parsewright/capture": "workspace:*",
+    "@parsewright/core": "workspace:*",
+    "@parsewright/manifest": "workspace:*",
+    "@parsewright/model-gateway": "workspace:*",
+    "@parsewright/runner": "workspace:*",
+    "@parsewright/storage": "workspace:*",
+    "@parsewright/validator": "workspace:*",
+    "commander": "^12.1.0"
+  },
+  "devDependencies": {
+    "tsup": "^8.3.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
