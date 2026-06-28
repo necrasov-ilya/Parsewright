@@ -29,7 +29,8 @@ export async function extractOnce(input: ExtractOnceInput, ports: { capture: Cap
   const capture = await ports.capture.capture({ url: input.url });
   const pageValidation = validatePage({ html: capture.html, status: capture.status, finalUrl: capture.finalUrl });
   if (!pageValidation.ok) {
-    throw Object.assign(new Error("Captured page failed sanity checks."), { pageValidation, capture });
+    const issueSummary = pageValidation.issues.map((issue) => `${issue.code}: ${issue.message}`).join("; ");
+    throw Object.assign(new Error(`Captured page failed sanity checks: ${issueSummary}`), { pageValidation, capture });
   }
 
   const pageContext = reducePage(capture.html, { maxHtmlChars: 45000, maxTextChars: 12000, maxCandidates: 80 });

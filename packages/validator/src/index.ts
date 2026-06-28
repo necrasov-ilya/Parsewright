@@ -22,14 +22,26 @@ export function validatePage(meta: PageCaptureMeta): ValidationResult {
   if (meta.status && (meta.status < 200 || meta.status >= 300)) {
     issues.push({ code: "page_status", message: `Expected HTTP 2xx, received ${meta.status}.` });
   }
-  const lower = meta.html.toLowerCase();
-  if (lower.includes("captcha") || lower.includes("access denied") || lower.includes("verify you are human")) {
+  const inspectableHtml = stripNonVisibleHtml(meta.html).toLowerCase();
+  const hasChallenge =
+    inspectableHtml.includes("access denied") ||
+    inspectableHtml.includes("verify you are human") ||
+    /(?:solve|complete|enter|pass|verify|пройдите|введите|подтвердите|проверку)[^<]{0,100}captcha/i.test(inspectableHtml) ||
+    /captcha[^<]{0,100}(?:solve|complete|enter|pass|verify|пройдите|введите|подтвердите|проверку)/i.test(inspectableHtml);
+  if (hasChallenge) {
     issues.push({ code: "page_blocked", message: "Page looks blocked or challenged." });
   }
   if (meta.html.trim().length < 200) {
     issues.push({ code: "page_empty", message: "Captured HTML is unexpectedly small." });
   }
   return { ok: issues.length === 0, issues };
+}
+
+function stripNonVisibleHtml(html: string): string {
+  return html
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<svg\b[^>]*>[\s\S]*?<\/svg>/gi, "");
 }
 
 export function validateData(manifest: ParsewrightManifest, data: Record<string, unknown>): ValidationResult {

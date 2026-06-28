@@ -30,6 +30,13 @@ export const ExtractionRuleSchema = z.object({
 });
 export type ExtractionRule = z.infer<typeof ExtractionRuleSchema>;
 
+export const CollectionSchema = z.object({
+  selector: z.string(),
+  fields: z.record(ExtractionRuleSchema),
+  limit: z.number().int().positive().max(5000).default(500)
+});
+export type CollectionDefinition = z.infer<typeof CollectionSchema>;
+
 export const ParsewrightManifestSchema = z.object({
   version: z.literal("0.1"),
   id: z.string().min(1),
@@ -41,6 +48,7 @@ export const ParsewrightManifestSchema = z.object({
   }),
   schema: z.record(FieldSchema),
   fields: z.record(ExtractionRuleSchema),
+  collections: z.record(CollectionSchema).default({}),
   license: z.string().default("MIT"),
   createdAt: z.string().datetime().optional(),
   updatedAt: z.string().datetime().optional()

@@ -159,6 +159,7 @@ export class HeuristicGateway implements ModelGateway {
       },
       schema,
       fields: rules,
+      collections: {},
       license: "MIT",
       createdAt: new Date().toISOString()
     };
@@ -214,6 +215,8 @@ const SYSTEM_PROMPT = [
   "Avoid random-looking CSS module, Tailwind utility, hashed, and framework-generated classes when possible.",
   "Use JSON-LD/meta context to understand the page, but v0 manifest fields must use CSS selectors against HTML.",
   "Every requested user field must appear in both schema and fields.",
+  "When the user asks for best, cheapest, top, products, listings, offers, rows, prices, search results, or anything that requires comparing repeated items, create a collection and put one row per repeated item there.",
+  "Collections must use a stable item selector and field selectors relative to that item. Use :scope when extracting text or attributes from the item itself.",
   "Use type number only when a numeric transform can reliably convert the extracted text.",
   "Use transforms only from this list: trim, number, price, lowercase, uppercase.",
   "Use multiple=true only for list fields.",
@@ -231,6 +234,15 @@ function manifestShape(url: string, goal: string) {
     source: { url, wait: { kind: "selector_or_timeout", selector: "optional css selector", timeoutMs: 10000, settleMs: 500 } },
     schema: { field_name: { type: "string|number|boolean|array|object", required: true, nullable: false, maxLength: 500 } },
     fields: { field_name: { selector: "css selector", attribute: "optional attribute name", multiple: false, transforms: ["trim"] } },
+    collections: {
+      collection_name: {
+        selector: "css selector for repeated item",
+        limit: 500,
+        fields: {
+          item_field: { selector: "relative css selector or :scope", attribute: "optional attribute name", multiple: false, transforms: ["trim"] }
+        }
+      }
+    },
     license: "MIT"
   };
 }
@@ -248,6 +260,20 @@ function normalizeManifestJson(value: any): unknown {
         if (rule.attribute === null) delete rule.attribute;
         if (rule.multiple === null) rule.multiple = false;
         if (rule.transforms === null) rule.transforms = [];
+      }
+    }
+  }
+  if (value.collections && typeof value.collections === "object") {
+    for (const collection of Object.values<any>(value.collections)) {
+      if (!collection || typeof collection !== "object") continue;
+      if (collection.limit === null) delete collection.limit;
+      if (!collection.fields || typeof collection.fields !== "object") continue;
+      for (const rule of Object.values<any>(collection.fields)) {
+        if (rule && typeof rule === "object") {
+          if (rule.attribute === null) delete rule.attribute;
+          if (rule.multiple === null) rule.multiple = false;
+          if (rule.transforms === null) rule.transforms = [];
+        }
       }
     }
   }

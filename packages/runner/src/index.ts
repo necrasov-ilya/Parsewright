@@ -13,19 +13,37 @@ export function runManifest({ manifest, html }: RunManifestInput): ExtractionDat
   const data: ExtractionData = {};
 
   for (const [field, rule] of Object.entries(manifest.fields)) {
-    const nodes = $(rule.selector);
-    const values = nodes
-      .toArray()
-      .map((node) => {
-        const value = rule.attribute ? $(node).attr(rule.attribute) : $(node).text();
-        return applyTransforms(value ?? "", rule.transforms);
-      })
-      .filter((value) => value !== "");
+    data[field] = extractRule($, $.root(), rule);
+  }
 
-    data[field] = rule.multiple ? values : values[0] ?? null;
+  for (const [collectionName, collection] of Object.entries(manifest.collections)) {
+    data[collectionName] = $(collection.selector)
+      .toArray()
+      .slice(0, collection.limit)
+      .map((node) => {
+        const item: Record<string, unknown> = {};
+        const root = $(node);
+        for (const [field, rule] of Object.entries(collection.fields)) {
+          item[field] = extractRule($, root, rule);
+        }
+        return item;
+      });
   }
 
   return data;
+}
+
+function extractRule($: cheerio.CheerioAPI, root: cheerio.Cheerio<any>, rule: ParsewrightManifest["fields"][string]): unknown {
+  const nodes = rule.selector === ":scope" ? root : root.find(rule.selector);
+  const values = nodes
+    .toArray()
+    .map((node) => {
+      const value = rule.attribute ? $(node).attr(rule.attribute) : $(node).text();
+      return applyTransforms(value ?? "", rule.transforms);
+    })
+    .filter((value) => value !== "");
+
+  return rule.multiple ? values : values[0] ?? null;
 }
 
 function applyTransforms(raw: string, transforms: Transform[]): unknown {

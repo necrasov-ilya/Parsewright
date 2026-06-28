@@ -1,5 +1,7 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
+import parsewrightLogo from "./assets/parsewright-logo-mark.svg";
+import { LaunchSplash } from "./components/LaunchSplash";
 import "./styles.css";
 
 declare global {
@@ -14,7 +16,7 @@ declare global {
   }
 }
 
-function App() {
+function ExtractionShell() {
   const [url, setUrl] = useState("");
   const [goal, setGoal] = useState("");
   const [heuristic, setHeuristic] = useState(true);
@@ -40,7 +42,7 @@ function App() {
     <main className="shell">
       <section className="hero">
         <div className="brand">
-          <div className="mark" />
+          <img className="mark" src={parsewrightLogo} alt="" aria-hidden="true" />
           <h1>Parsewright</h1>
         </div>
         <p>Turn a website request into data and a reusable parser artifact.</p>
@@ -63,6 +65,26 @@ function App() {
       {error ? <pre className="error">{error}</pre> : null}
       {result ? <pre className="result">{JSON.stringify(result, null, 2)}</pre> : null}
     </main>
+  );
+}
+
+function App() {
+  const [introComplete, setIntroComplete] = useState(false);
+  const [shellVisible, setShellVisible] = useState(false);
+
+  useEffect(() => {
+    if (!introComplete) return;
+    const timer = window.setTimeout(() => setShellVisible(true), 40);
+    return () => window.clearTimeout(timer);
+  }, [introComplete]);
+
+  return (
+    <div className="app-root">
+      <div className={shellVisible ? "app-root__shell app-root__shell--visible" : "app-root__shell"}>
+        <ExtractionShell />
+      </div>
+      {introComplete ? null : <LaunchSplash onComplete={() => setIntroComplete(true)} />}
+    </div>
   );
 }
 
