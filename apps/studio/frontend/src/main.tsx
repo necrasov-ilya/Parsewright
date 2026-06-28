@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import parsewrightLogo from "./assets/parsewright-logo-mark.svg";
 import { LaunchSplash } from "./components/LaunchSplash";
@@ -10,6 +10,7 @@ declare global {
       main?: {
         App?: {
           Extract(input: ExtractInput): Promise<ExtractResult>;
+          Reset(): Promise<{ ok: boolean }>;
         };
       };
     };
@@ -252,6 +253,8 @@ function formatCell(value: unknown): string {
 function App() {
   const [introComplete, setIntroComplete] = useState(false);
   const [shellVisible, setShellVisible] = useState(false);
+  const [sessionKey, setSessionKey] = useState(0);
+  const [resetting, setResetting] = useState(false);
 
   useEffect(() => {
     if (!introComplete) return;
@@ -259,12 +262,40 @@ function App() {
     return () => window.clearTimeout(timer);
   }, [introComplete]);
 
+  const resetApp = useCallback(async () => {
+    setResetting(true);
+    setShellVisible(false);
+    setIntroComplete(false);
+    setSessionKey((key) => key + 1);
+    window.localStorage.removeItem("parsewright.baseUrl");
+    window.localStorage.removeItem("parsewright.model");
+    window.localStorage.removeItem("parsewright.apiKey");
+    try {
+      await window.go?.main?.App?.Reset();
+    } catch {
+      // Sidecar restart failure is non-fatal — ensureSidecar will retry on next extract.
+    }
+    setResetting(false);
+  }, []);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.ctrlKey && event.shiftKey && event.key === "R") {
+        event.preventDefault();
+        event.stopPropagation();
+        resetApp();
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
+  }, [resetApp]);
+
   return (
     <div className="app-root">
       <div className={shellVisible ? "app-root__shell app-root__shell--visible" : "app-root__shell"}>
-        <ExtractionShell />
+        <ExtractionShell key={sessionKey} />
       </div>
-      {introComplete ? null : <LaunchSplash onComplete={() => setIntroComplete(true)} />}
+      {introComplete && !resetting ? null : <LaunchSplash onComplete={() => setIntroComplete(true)} />}
     </div>
   );
 }

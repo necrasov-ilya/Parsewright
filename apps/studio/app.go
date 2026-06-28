@@ -46,9 +46,40 @@ func (a *App) startup(ctx context.Context) {
 }
 
 func (a *App) shutdown(ctx context.Context) {
+	a.killSidecar()
+}
+
+func (a *App) killSidecar() {
 	if a.cmd != nil && a.cmd.Process != nil {
 		_ = a.cmd.Process.Kill()
+		_ = a.cmd.Wait()
+		a.cmd = nil
 	}
+	client := http.Client{Timeout: 500 * time.Millisecond}
+	if resp, err := client.Get("http://127.0.0.1:47831/health"); err == nil {
+		defer resp.Body.Close()
+		var health HealthResponse
+		if json.NewDecoder(resp.Body).Decode(&health) == nil && health.PID > 0 {
+			if process, findErr := os.FindProcess(health.PID); findErr == nil {
+				_ = process.Kill()
+			}
+		}
+	}
+	time.Sleep(500 * time.Millisecond)
+}
+
+type ResetResponse struct {
+	OK bool `json:"ok"`
+}
+
+func (a *App) Reset() (ResetResponse, error) {
+	client := http.Client{Timeout: 2 * time.Second}
+	_, _ = client.Post("http://127.0.0.1:47831/reset", "application/json", bytes.NewReader([]byte("{}")))
+	a.killSidecar()
+	if err := a.startSidecar(); err != nil {
+		return ResetResponse{}, err
+	}
+	return ResetResponse{OK: true}, nil
 }
 
 func (a *App) Extract(request ExtractRequest) (map[string]interface{}, error) {

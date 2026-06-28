@@ -11,7 +11,8 @@
   "dependencies": {
     "@parsewright/capture": "workspace:*",
     "@parsewright/core": "workspace:*",
-    "@parsewright/model-gateway": "workspace:*"
+    "@parsewright/model-gateway": "workspace:*",
+    "@parsewright/storage": "workspace:*"
   },
   "devDependencies": {
     "tsup": "^8.3.5",

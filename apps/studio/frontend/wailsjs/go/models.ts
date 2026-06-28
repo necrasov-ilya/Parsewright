@@ -26,6 +26,18 @@ export namespace main {
 	        this.mode = source["mode"];
 	    }
 	}
+	export class ResetResponse {
+	    ok: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new ResetResponse(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ok = source["ok"];
+	    }
+	}
 
 }
 

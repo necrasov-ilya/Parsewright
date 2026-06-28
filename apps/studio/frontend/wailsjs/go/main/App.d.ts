@@ -3,3 +3,5 @@
 import {main} from '../models';
 
 export function Extract(arg1:main.ExtractRequest):Promise<Record<string, any>>;
+
+export function Reset():Promise<main.ResetResponse>;

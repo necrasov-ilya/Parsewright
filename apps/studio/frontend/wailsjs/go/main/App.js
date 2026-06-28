@@ -5,3 +5,7 @@
 export function Extract(arg1) {
   return window['go']['main']['App']['Extract'](arg1);
 }
+
+export function Reset() {
+  return window['go']['main']['App']['Reset']();
+}
