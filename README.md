@@ -6,13 +6,18 @@ The repo is shaped around a portable core first, then product surfaces around it
 
 ## Current shape
 
-- `packages/manifest` defines the parser artifact schema.
+- `packages/manifest` defines the parser artifact schema, including the `strategy` field that records the extraction shape.
+- `packages/planner` provides the `ExtractionStrategy` type and a heuristic fallback for smoke tests.
 - `packages/runner` executes a manifest against captured HTML.
 - `packages/validator` performs page sanity and stage-one field validation.
 - `packages/capture` captures pages with Playwright.
-- `packages/page-reducer` turns noisy HTML into compact model context.
-- `packages/model-gateway` talks to OpenAI-compatible models, with a heuristic smoke-test gateway.
-- `packages/core` contains the `extractOnce` use case.
+- `packages/page-reducer` turns noisy HTML into compact, neutral model context.
+- `packages/model-gateway` talks to OpenAI-compatible models: plans strategy, generates manifests, classifies candidates, verifies and composes answers. Includes a heuristic smoke-test gateway.
+- `packages/core` contains the `extractUniversal` use case that branches by strategy.
+- `packages/normalizer` turns collection rows into comparable candidates (used only for collection with ranking).
+- `packages/ranker` filters and sorts candidates by relevance and price (used only for collection with ranking).
+- `packages/classifier` annotates ranked candidates, with an LLM classification seam.
+- `packages/composer` provides a deterministic fallback composer for heuristic mode.
 - `packages/storage` saves manifests, results, and snapshots to project folders.
 - `apps/cli` exposes the core from the terminal.
 - `apps/mcp` exposes a minimal `extract_once` MCP tool.

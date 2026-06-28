@@ -167,20 +167,61 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.20.0)
 
+  packages/classifier:
+    dependencies:
+      '@parsewright/ranker':
+        specifier: workspace:*
+        version: link:../ranker
+    devDependencies:
+      tsup:
+        specifier: ^8.3.5
+        version: 8.5.1(postcss@8.5.15)(tsx@4.22.4)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.0)
+
+  packages/composer:
+    dependencies:
+      '@parsewright/manifest':
+        specifier: workspace:*
+        version: link:../manifest
+    devDependencies:
+      tsup:
+        specifier: ^8.3.5
+        version: 8.5.1(postcss@8.5.15)(tsx@4.22.4)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.0)
+
   packages/core:
     dependencies:
       '@parsewright/capture':
         specifier: workspace:*
         version: link:../capture
+      '@parsewright/classifier':
+        specifier: workspace:*
+        version: link:../classifier
       '@parsewright/manifest':
         specifier: workspace:*
         version: link:../manifest
       '@parsewright/model-gateway':
         specifier: workspace:*
         version: link:../model-gateway
+      '@parsewright/normalizer':
+        specifier: workspace:*
+        version: link:../normalizer
       '@parsewright/page-reducer':
         specifier: workspace:*
         version: link:../page-reducer
+      '@parsewright/ranker':
+        specifier: workspace:*
+        version: link:../ranker
       '@parsewright/runner':
         specifier: workspace:*
         version: link:../runner
@@ -222,9 +263,24 @@ importers:
       '@parsewright/page-reducer':
         specifier: workspace:*
         version: link:../page-reducer
+      '@parsewright/planner':
+        specifier: workspace:*
+        version: link:../planner
       zod:
         specifier: ^3.24.1
         version: 3.25.76
+    devDependencies:
+      tsup:
+        specifier: ^8.3.5
+        version: 8.5.1(postcss@8.5.15)(tsx@4.22.4)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.0)
+
+  packages/normalizer:
     devDependencies:
       tsup:
         specifier: ^8.3.5
@@ -241,6 +297,41 @@ importers:
       cheerio:
         specifier: ^1.0.0
         version: 1.2.0
+    devDependencies:
+      tsup:
+        specifier: ^8.3.5
+        version: 8.5.1(postcss@8.5.15)(tsx@4.22.4)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.0)
+
+  packages/planner:
+    dependencies:
+      '@parsewright/manifest':
+        specifier: workspace:*
+        version: link:../manifest
+    devDependencies:
+      tsup:
+        specifier: ^8.3.5
+        version: 8.5.1(postcss@8.5.15)(tsx@4.22.4)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.0)
+
+  packages/ranker:
+    dependencies:
+      '@parsewright/manifest':
+        specifier: workspace:*
+        version: link:../manifest
+      '@parsewright/normalizer':
+        specifier: workspace:*
+        version: link:../normalizer
     devDependencies:
       tsup:
         specifier: ^8.3.5

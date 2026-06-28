@@ -174,7 +174,13 @@ textarea {
   background: var(--pw-color-surface-muted);
 }
 
-label {
+.action-right {
+  display: flex;
+  align-items: center;
+  gap: var(--pw-space-3);
+}
+
+.status {
   color: var(--pw-color-text-muted);
   font-size: 13px;
 }
@@ -191,6 +197,32 @@ button {
   font-weight: 680;
   cursor: pointer;
   transition: transform 120ms ease, opacity 120ms ease, background 120ms ease;
+}
+
+.ghost-button {
+  background: transparent;
+  color: var(--pw-color-text-muted);
+  border: 1px solid var(--pw-color-border);
+}
+
+.ghost-button:hover:not(:disabled) {
+  background: var(--pw-color-surface-soft);
+}
+
+.settings {
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr 1fr;
+  border-top: 1px solid var(--pw-color-border-soft);
+}
+
+.settings input {
+  border-bottom: 0;
+  border-right: 1px solid var(--pw-color-border-soft);
+  padding: 14px;
+}
+
+.settings input:last-child {
+  border-right: 0;
 }
 
 button:hover:not(:disabled) {
@@ -220,4 +252,82 @@ button:disabled {
 
 .error {
   color: #ffb6b6;
+}
+
+.result-card {
+  margin-top: 18px;
+  padding: 18px;
+  border-radius: var(--pw-radius-md);
+  background: var(--pw-color-surface-elevated);
+  border: 1px solid var(--pw-color-border);
+  box-shadow: 0 12px 36px var(--pw-color-shadow);
+}
+
+.answer {
+  margin: 0 0 16px;
+  color: var(--pw-color-text);
+  font-size: 16px;
+  line-height: 1.45;
+}
+
+.warning {
+  color: #ffd28a;
+}
+
+.table-wrap {
+  overflow: auto;
+  max-height: 360px;
+  border: 1px solid var(--pw-color-border-soft);
+  border-radius: var(--pw-radius-sm);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+th,
+td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--pw-color-border-soft);
+  text-align: left;
+  vertical-align: top;
+}
+
+th {
+  color: var(--pw-color-text-muted);
+  font-weight: 650;
+  background: var(--pw-color-surface-muted);
+}
+
+td:first-child,
+th:first-child {
+  width: 42px;
+}
+
+td:nth-child(3),
+th:nth-child(3),
+td:nth-child(5),
+th:nth-child(5) {
+  white-space: nowrap;
+}
+
+a {
+  color: var(--pw-color-text);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--pw-color-accent);
+}
+
+details {
+  margin-top: 14px;
+  color: var(--pw-color-text-muted);
+  font-size: 13px;
+}
+
+summary {
+  cursor: pointer;
 }

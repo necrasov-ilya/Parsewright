@@ -1,5 +1,5 @@
 {
-  "name": "@parsewright/model-gateway",
+  "name": "@parsewright/classifier",
   "version": "0.0.0",
   "type": "module",
   "main": "dist/index.js",
@@ -16,10 +16,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@parsewright/manifest": "workspace:*",
-    "@parsewright/page-reducer": "workspace:*",
-    "@parsewright/planner": "workspace:*",
-    "zod": "^3.24.1"
+    "@parsewright/ranker": "workspace:*"
   },
   "devDependencies": {
     "tsup": "^8.3.5",

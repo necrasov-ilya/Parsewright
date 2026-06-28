@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { Command } from "commander";
 import { capturePage } from "@parsewright/capture";
-import { extractOnce } from "@parsewright/core";
+import { extractUniversal } from "@parsewright/core";
 import { parseManifest } from "@parsewright/manifest";
 import { createModelGateway, HeuristicGateway, MODEL_PROVIDER_PRESETS, type ModelProviderId } from "@parsewright/model-gateway";
 import { runManifest } from "@parsewright/runner";
@@ -34,21 +34,31 @@ program
           model: options.model ?? process.env.PARSEWRIGHT_MODEL
         });
 
-    const result = await extractOnce(
+    const capturePort = { capture: ({ url }: { url: string }) => capturePage({ url }) };
+    const result = await extractUniversal(
       { url: options.url, goal: options.goal },
-      { capture: { capture: ({ url }) => capturePage({ url }) }, model }
+      { capture: capturePort, model }
     );
 
     if (options.save) {
+      const html = await capturePage({ url: options.url }).then((capture) => capture.html);
       await saveProject({
         rootDir: path.resolve(options.save),
         manifest: result.manifest,
         result: result.data,
-        snapshotHtml: result.capture.html
+        snapshotHtml: html
       });
     }
 
-    console.log(JSON.stringify({ data: result.data, validation: result.dataValidation, manifest: result.manifest }, null, 2));
+    console.log(JSON.stringify({
+      answer: result.answer,
+      data: result.data,
+      strategy: result.strategy,
+      table: result.table,
+      verification: result.verification,
+      validation: result.validation,
+      manifest: result.manifest
+    }, null, 2));
   });
 
 program

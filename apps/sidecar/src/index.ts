@@ -1,14 +1,19 @@
 import http from "node:http";
+import fs from "node:fs";
+import path from "node:path";
 import { capturePage } from "@parsewright/capture";
-import { extractOnce } from "@parsewright/core";
+import { extractUniversal } from "@parsewright/core";
 import { createModelGateway, HeuristicGateway, listModelProviders, MODEL_PROVIDER_PRESETS, type ModelProviderId } from "@parsewright/model-gateway";
 
 const port = Number(process.env.PARSEWRIGHT_SIDECAR_PORT ?? 47831);
+const startedAt = new Date().toISOString();
+const workspaceRoot = findWorkspaceRoot(process.cwd());
+const sidecarVersion = "brain-v1";
 
 const server = http.createServer(async (req, res) => {
   try {
     if (req.method === "GET" && req.url === "/health") {
-      return json(res, 200, { ok: true });
+      return json(res, 200, { ok: true, version: sidecarVersion, pid: process.pid, startedAt, workspaceRoot });
     }
 
     if (req.method === "GET" && req.url === "/providers") {
@@ -26,17 +31,17 @@ const server = http.createServer(async (req, res) => {
       const body = await readJson(req);
       const model = body.heuristic
         ? new HeuristicGateway()
-        : createModelGateway({
-            provider: parseProvider(body.provider ?? process.env.PARSEWRIGHT_PROVIDER ?? "openai"),
-            apiKey: requireKey(body.apiKey ?? providerApiKey(parseProvider(body.provider ?? process.env.PARSEWRIGHT_PROVIDER ?? "openai"))),
-            baseUrl: body.baseUrl ?? process.env.PARSEWRIGHT_BASE_URL,
-            model: body.model ?? process.env.PARSEWRIGHT_MODEL
+          : createModelGateway({
+            provider: parseProvider(body.provider ?? process.env.PARSEWRIGHT_PROVIDER ?? "openai-compatible"),
+            apiKey: requireKey(nonEmpty(body.apiKey) ?? providerApiKey(parseProvider(body.provider ?? process.env.PARSEWRIGHT_PROVIDER ?? "openai-compatible"))),
+            baseUrl: nonEmpty(body.baseUrl) ?? process.env.PARSEWRIGHT_BASE_URL,
+            model: nonEmpty(body.model) ?? process.env.PARSEWRIGHT_MODEL
           });
-      const result = await extractOnce(
-        { url: body.url, goal: body.goal },
+      const result = await extractUniversal(
+        { url: body.url, goal: body.goal, maxItems: body.maxItems, mode: body.mode ?? "auto" },
         { capture: { capture: ({ url }) => capturePage({ url }) }, model }
       );
-      return json(res, 200, { data: result.data, validation: result.dataValidation, manifest: result.manifest });
+      return json(res, 200, result);
     }
 
     return json(res, 404, { error: "not_found" });
@@ -81,4 +86,18 @@ function parseProvider(value: string): ModelProviderId {
 
 function providerApiKey(provider: ModelProviderId): string | undefined {
   return process.env[MODEL_PROVIDER_PRESETS[provider].envKey];
+}
+
+function nonEmpty(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function findWorkspaceRoot(start: string): string {
+  let current = start;
+  while (true) {
+    if (fs.existsSync(path.join(current, "pnpm-workspace.yaml"))) return current;
+    const parent = path.dirname(current);
+    if (parent === current) return start;
+    current = parent;
+  }
 }

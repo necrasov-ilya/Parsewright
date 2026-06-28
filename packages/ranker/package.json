@@ -1,5 +1,5 @@
 {
-  "name": "@parsewright/model-gateway",
+  "name": "@parsewright/ranker",
   "version": "0.0.0",
   "type": "module",
   "main": "dist/index.js",
@@ -17,9 +17,7 @@
   },
   "dependencies": {
     "@parsewright/manifest": "workspace:*",
-    "@parsewright/page-reducer": "workspace:*",
-    "@parsewright/planner": "workspace:*",
-    "zod": "^3.24.1"
+    "@parsewright/normalizer": "workspace:*"
   },
   "devDependencies": {
     "tsup": "^8.3.5",

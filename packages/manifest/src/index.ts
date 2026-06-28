@@ -6,6 +6,24 @@ export type FieldType = z.infer<typeof FieldTypeSchema>;
 export const TransformSchema = z.enum(["trim", "number", "price", "lowercase", "uppercase"]);
 export type Transform = z.infer<typeof TransformSchema>;
 
+export const StrategyKindSchema = z.enum(["fields", "collection", "summary"]);
+export type StrategyKind = z.infer<typeof StrategyKindSchema>;
+
+export const RankingObjectiveSchema = z.enum(["lowest_price", "highest_score", "relevance", "none"]);
+export type RankingObjective = z.infer<typeof RankingObjectiveSchema>;
+
+export const StrategySchema = z.object({
+  kind: StrategyKindSchema,
+  fields: z.array(z.string()).optional(),
+  ranking: z
+    .object({
+      objective: RankingObjectiveSchema,
+      topK: z.number().int().positive().max(100).default(20)
+    })
+    .optional()
+});
+export type ExtractionStrategy = z.infer<typeof StrategySchema>;
+
 export const WaitStrategySchema = z.object({
   kind: z.enum(["load", "domcontentloaded", "networkidle", "selector_or_timeout"]).default("selector_or_timeout"),
   selector: z.string().optional(),
@@ -46,6 +64,7 @@ export const ParsewrightManifestSchema = z.object({
     url: z.string().url(),
     wait: WaitStrategySchema
   }),
+  strategy: StrategySchema.optional(),
   schema: z.record(FieldSchema),
   fields: z.record(ExtractionRuleSchema),
   collections: z.record(CollectionSchema).default({}),

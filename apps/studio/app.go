@@ -19,9 +19,21 @@ type App struct {
 }
 
 type ExtractRequest struct {
-	URL       string `json:"url"`
-	Goal      string `json:"goal"`
-	Heuristic bool   `json:"heuristic"`
+	URL      string `json:"url"`
+	Goal     string `json:"goal"`
+	Provider string `json:"provider"`
+	BaseURL  string `json:"baseUrl"`
+	Model    string `json:"model"`
+	APIKey   string `json:"apiKey"`
+	MaxItems int    `json:"maxItems"`
+	Mode     string `json:"mode"`
+}
+
+type HealthResponse struct {
+	OK            bool   `json:"ok"`
+	Version       string `json:"version"`
+	PID           int    `json:"pid"`
+	WorkspaceRoot string `json:"workspaceRoot"`
 }
 
 func NewApp() *App {
@@ -65,11 +77,24 @@ func (a *App) Extract(request ExtractRequest) (map[string]interface{}, error) {
 }
 
 func (a *App) ensureSidecar() error {
+	root, err := findRepoRoot()
+	if err != nil {
+		return err
+	}
 	client := http.Client{Timeout: 500 * time.Millisecond}
 	resp, err := client.Get("http://127.0.0.1:47831/health")
 	if err == nil {
-		_ = resp.Body.Close()
-		return nil
+		defer resp.Body.Close()
+		var health HealthResponse
+		if json.NewDecoder(resp.Body).Decode(&health) == nil && health.OK && health.Version == "brain-v1" && filepath.Clean(health.WorkspaceRoot) == filepath.Clean(root) {
+			return nil
+		}
+		if health.PID > 0 {
+			if process, findErr := os.FindProcess(health.PID); findErr == nil {
+				_ = process.Kill()
+				time.Sleep(500 * time.Millisecond)
+			}
+		}
 	}
 	return a.startSidecar()
 }
@@ -82,9 +107,6 @@ func (a *App) startSidecar() error {
 	cmd := exec.Command("pnpm", "--filter", "@parsewright/sidecar", "dev")
 	cmd.Dir = root
 	cmd.Env = os.Environ()
-	if os.Getenv("OPENAI_API_KEY") == "" {
-		cmd.Env = append(cmd.Env, "PARSEWRIGHT_HEURISTIC_DEFAULT=1")
-	}
 	if err := cmd.Start(); err != nil {
 		return err
 	}

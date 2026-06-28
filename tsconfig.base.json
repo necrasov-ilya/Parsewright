@@ -13,10 +13,15 @@
     "baseUrl": ".",
     "paths": {
       "@parsewright/capture": ["packages/capture/src/index.ts"],
+      "@parsewright/classifier": ["packages/classifier/src/index.ts"],
+      "@parsewright/composer": ["packages/composer/src/index.ts"],
       "@parsewright/core": ["packages/core/src/index.ts"],
       "@parsewright/manifest": ["packages/manifest/src/index.ts"],
       "@parsewright/model-gateway": ["packages/model-gateway/src/index.ts"],
+      "@parsewright/normalizer": ["packages/normalizer/src/index.ts"],
       "@parsewright/page-reducer": ["packages/page-reducer/src/index.ts"],
+      "@parsewright/planner": ["packages/planner/src/index.ts"],
+      "@parsewright/ranker": ["packages/ranker/src/index.ts"],
       "@parsewright/runner": ["packages/runner/src/index.ts"],
       "@parsewright/storage": ["packages/storage/src/index.ts"],
       "@parsewright/validator": ["packages/validator/src/index.ts"]

@@ -1,5 +1,5 @@
 {
-  "name": "@parsewright/model-gateway",
+  "name": "@parsewright/normalizer",
   "version": "0.0.0",
   "type": "module",
   "main": "dist/index.js",
@@ -14,12 +14,6 @@
     "build": "tsup src/index.ts --format esm --dts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests"
-  },
-  "dependencies": {
-    "@parsewright/manifest": "workspace:*",
-    "@parsewright/page-reducer": "workspace:*",
-    "@parsewright/planner": "workspace:*",
-    "zod": "^3.24.1"
   },
   "devDependencies": {
     "tsup": "^8.3.5",

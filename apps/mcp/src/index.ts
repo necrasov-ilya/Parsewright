@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { capturePage } from "@parsewright/capture";
-import { extractOnce } from "@parsewright/core";
+import { extractUniversal } from "@parsewright/core";
 import { createModelGateway, HeuristicGateway, MODEL_PROVIDER_PRESETS, type ModelProviderId } from "@parsewright/model-gateway";
 
 const server = new McpServer({ name: "parsewright", version: "0.0.0" });
@@ -26,12 +26,23 @@ server.tool(
           model: process.env.PARSEWRIGHT_MODEL
         });
 
-    const result = await extractOnce({ url, goal }, { capture: { capture: ({ url: target }) => capturePage({ url: target }) }, model });
+    const result = await extractUniversal(
+      { url, goal },
+      { capture: { capture: ({ url: target }) => capturePage({ url: target }) }, model }
+    );
     return {
       content: [
         {
           type: "text",
-          text: JSON.stringify({ data: result.data, validation: result.dataValidation, manifest: result.manifest }, null, 2)
+          text: JSON.stringify({
+            answer: result.answer,
+            data: result.data,
+            strategy: result.strategy,
+            table: result.table,
+            verification: result.verification,
+            validation: result.validation,
+            manifest: result.manifest
+          }, null, 2)
         }
       ]
     };
