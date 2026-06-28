@@ -178,6 +178,9 @@ importers:
       '@parsewright/model-gateway':
         specifier: workspace:*
         version: link:../model-gateway
+      '@parsewright/page-reducer':
+        specifier: workspace:*
+        version: link:../page-reducer
       '@parsewright/runner':
         specifier: workspace:*
         version: link:../runner
@@ -216,9 +219,28 @@ importers:
       '@parsewright/manifest':
         specifier: workspace:*
         version: link:../manifest
+      '@parsewright/page-reducer':
+        specifier: workspace:*
+        version: link:../page-reducer
       zod:
         specifier: ^3.24.1
         version: 3.25.76
+    devDependencies:
+      tsup:
+        specifier: ^8.3.5
+        version: 8.5.1(postcss@8.5.15)(tsx@4.22.4)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.0)
+
+  packages/page-reducer:
+    dependencies:
+      cheerio:
+        specifier: ^1.0.0
+        version: 1.2.0
     devDependencies:
       tsup:
         specifier: ^8.3.5

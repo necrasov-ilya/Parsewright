@@ -10,6 +10,7 @@ The repo is shaped around a portable core first, then product surfaces around it
 - `packages/runner` executes a manifest against captured HTML.
 - `packages/validator` performs page sanity and stage-one field validation.
 - `packages/capture` captures pages with Playwright.
+- `packages/page-reducer` turns noisy HTML into compact model context.
 - `packages/model-gateway` talks to OpenAI-compatible models, with a heuristic smoke-test gateway.
 - `packages/core` contains the `extractOnce` use case.
 - `packages/storage` saves manifests, results, and snapshots to project folders.
@@ -45,4 +46,4 @@ cd apps/studio
 wails build
 ```
 
-Use `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL` for real model-backed manifest generation. The heuristic mode is only for smoke tests.
+Use `OPENAI_API_KEY` for OpenAI, `FIREWORKS_API_KEY` for Fireworks, or `PARSEWRIGHT_PROVIDER`, `PARSEWRIGHT_BASE_URL`, and `PARSEWRIGHT_MODEL` to override model routing. The heuristic mode is only for smoke tests.

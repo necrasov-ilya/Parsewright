@@ -5,7 +5,7 @@ import { Command } from "commander";
 import { capturePage } from "@parsewright/capture";
 import { extractOnce } from "@parsewright/core";
 import { parseManifest } from "@parsewright/manifest";
-import { HeuristicGateway, OpenAICompatibleGateway } from "@parsewright/model-gateway";
+import { createModelGateway, HeuristicGateway, MODEL_PROVIDER_PRESETS, type ModelProviderId } from "@parsewright/model-gateway";
 import { runManifest } from "@parsewright/runner";
 import { saveProject } from "@parsewright/storage";
 import { validateData, validatePage } from "@parsewright/validator";
@@ -20,16 +20,18 @@ program
   .requiredOption("--goal <goal>")
   .option("--save <dir>")
   .option("--api-key <key>", "OpenAI-compatible API key", process.env.OPENAI_API_KEY)
+  .option("--provider <provider>", "Model provider preset: openai, fireworks, openai-compatible", process.env.PARSEWRIGHT_PROVIDER ?? "openai")
   .option("--base-url <url>", "OpenAI-compatible base URL")
   .option("--model <model>", "Model name")
   .option("--heuristic", "Use a local heuristic manifest generator for smoke tests")
   .action(async (options) => {
     const model = options.heuristic
       ? new HeuristicGateway()
-      : new OpenAICompatibleGateway({
-          apiKey: requireKey(options.apiKey),
-          baseUrl: options.baseUrl,
-          model: options.model
+      : createModelGateway({
+          provider: parseProvider(options.provider),
+          apiKey: requireKey(options.apiKey ?? providerApiKey(parseProvider(options.provider))),
+          baseUrl: options.baseUrl ?? process.env.PARSEWRIGHT_BASE_URL,
+          model: options.model ?? process.env.PARSEWRIGHT_MODEL
         });
 
     const result = await extractOnce(
@@ -72,4 +74,13 @@ program.parseAsync().catch((error) => {
 function requireKey(key?: string): string {
   if (!key) throw new Error("Missing API key. Set OPENAI_API_KEY, pass --api-key, or use --heuristic for smoke tests.");
   return key;
+}
+
+function parseProvider(value: string): ModelProviderId {
+  if (value === "openai" || value === "fireworks" || value === "openai-compatible") return value;
+  throw new Error(`Unknown provider "${value}". Use openai, fireworks, or openai-compatible.`);
+}
+
+function providerApiKey(provider: ModelProviderId): string | undefined {
+  return process.env[MODEL_PROVIDER_PRESETS[provider].envKey];
 }

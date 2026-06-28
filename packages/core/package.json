@@ -19,6 +19,7 @@
     "@parsewright/capture": "workspace:*",
     "@parsewright/manifest": "workspace:*",
     "@parsewright/model-gateway": "workspace:*",
+    "@parsewright/page-reducer": "workspace:*",
     "@parsewright/runner": "workspace:*",
     "@parsewright/validator": "workspace:*"
   },
