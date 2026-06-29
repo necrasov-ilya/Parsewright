@@ -51,4 +51,9 @@ cd apps/studio
 wails build
 ```
 
+Run the app
+```bash
+wails dev
+``` 
+
 Use `OPENAI_API_KEY` for OpenAI, `FIREWORKS_API_KEY` for Fireworks, or `PARSEWRIGHT_PROVIDER`, `PARSEWRIGHT_BASE_URL`, and `PARSEWRIGHT_MODEL` to override model routing. The heuristic mode is only for smoke tests.

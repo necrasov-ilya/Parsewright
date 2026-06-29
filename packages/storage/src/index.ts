@@ -37,6 +37,19 @@ export interface SettingRecord {
   value: string;
 }
 
+export interface DialogRecord {
+  id: number;
+  title: string;
+  url: string;
+  domain: string;
+  favicon_url: string | null;
+  accent_color: string | null;
+  goal: string;
+  answer: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS projects (
     id          TEXT PRIMARY KEY,
@@ -64,8 +77,21 @@ const SCHEMA = [
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS dialogs (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    title        TEXT NOT NULL,
+    url          TEXT NOT NULL,
+    domain       TEXT NOT NULL,
+    favicon_url  TEXT,
+    accent_color TEXT,
+    goal         TEXT NOT NULL,
+    answer       TEXT,
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL
+  )`,
   `CREATE INDEX IF NOT EXISTS idx_runs_project ON runs(project_id)`,
-  `CREATE INDEX IF NOT EXISTS idx_runs_started ON runs(started_at DESC)`
+  `CREATE INDEX IF NOT EXISTS idx_runs_started ON runs(started_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_dialogs_created ON dialogs(created_at DESC)`
 ].join(";");
 
 export class ParsewrightStorage {
@@ -187,8 +213,63 @@ export class ParsewrightStorage {
     this.db.prepare("DELETE FROM settings WHERE key = ?").run(key);
   }
 
+  createDialog(input: {
+    title: string;
+    url: string;
+    domain: string;
+    faviconUrl?: string;
+    accentColor?: string;
+    goal: string;
+    answer?: string;
+  }): number {
+    const now = new Date().toISOString();
+    const result = this.db.prepare(
+      `INSERT INTO dialogs (title, url, domain, favicon_url, accent_color, goal, answer, created_at, updated_at)
+       VALUES (@title, @url, @domain, @favicon_url, @accent_color, @goal, @answer, @created_at, @updated_at)`
+    ).run({
+      title: input.title,
+      url: input.url,
+      domain: input.domain,
+      favicon_url: input.faviconUrl ?? null,
+      accent_color: input.accentColor ?? null,
+      goal: input.goal,
+      answer: input.answer ?? null,
+      created_at: now,
+      updated_at: now
+    });
+    return Number(result.lastInsertRowid);
+  }
+
+  updateDialog(id: number, input: Partial<{
+    title: string;
+    accentColor: string;
+    answer: string;
+  }>): void {
+    const sets: string[] = [];
+    const params: Record<string, unknown> = { id };
+    if (input.title !== undefined) { sets.push("title = @title"); params.title = input.title; }
+    if (input.accentColor !== undefined) { sets.push("accent_color = @accent_color"); params.accent_color = input.accentColor; }
+    if (input.answer !== undefined) { sets.push("answer = @answer"); params.answer = input.answer; }
+    if (sets.length === 0) return;
+    sets.push("updated_at = @updated_at");
+    params.updated_at = new Date().toISOString();
+    this.db.prepare(`UPDATE dialogs SET ${sets.join(", ")} WHERE id = @id`).run(params);
+  }
+
+  getDialog(id: number): DialogRecord | undefined {
+    return this.db.prepare("SELECT * FROM dialogs WHERE id = ?").get(id) as DialogRecord | undefined;
+  }
+
+  listDialogs(limit = 100): DialogRecord[] {
+    return this.db.prepare("SELECT * FROM dialogs ORDER BY created_at DESC LIMIT ?").all(limit) as DialogRecord[];
+  }
+
+  deleteDialog(id: number): void {
+    this.db.prepare("DELETE FROM dialogs WHERE id = ?").run(id);
+  }
+
   reset(): void {
-    this.db.exec("DELETE FROM runs; DELETE FROM projects; DELETE FROM settings;");
+    this.db.exec("DELETE FROM runs; DELETE FROM projects; DELETE FROM settings; DELETE FROM dialogs;");
     void rm(this.projectsDir, { recursive: true, force: true });
     void rm(this.snapshotsDir, { recursive: true, force: true });
   }

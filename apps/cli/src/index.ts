@@ -87,8 +87,8 @@ function requireKey(key?: string): string {
 }
 
 function parseProvider(value: string): ModelProviderId {
-  if (value === "openai" || value === "fireworks" || value === "openai-compatible") return value;
-  throw new Error(`Unknown provider "${value}". Use openai, fireworks, or openai-compatible.`);
+  if (value in MODEL_PROVIDER_PRESETS) return value as ModelProviderId;
+  throw new Error(`Unknown provider "${value}".`);
 }
 
 function providerApiKey(provider: ModelProviderId): string | undefined {

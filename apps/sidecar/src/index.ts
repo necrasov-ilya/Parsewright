@@ -31,6 +31,48 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
+    if (req.method === "GET" && req.url === "/dialogs") {
+      return json(res, 200, { dialogs: storage.listDialogs() });
+    }
+
+    if (req.method === "GET" && req.url?.startsWith("/dialogs/")) {
+      const id = Number(decodeURIComponent(req.url.slice("/dialogs/".length)));
+      const dialog = storage.getDialog(id);
+      if (!dialog) return json(res, 404, { error: "dialog_not_found" });
+      return json(res, 200, { dialog });
+    }
+
+    if (req.method === "DELETE" && req.url?.startsWith("/dialogs/")) {
+      const id = Number(decodeURIComponent(req.url.slice("/dialogs/".length)));
+      storage.deleteDialog(id);
+      return json(res, 200, { ok: true });
+    }
+
+    if (req.method === "POST" && req.url === "/dialogs") {
+      const body = await readJson(req);
+      const id = storage.createDialog({
+        title: body.title ?? body.goal ?? "New dialog",
+        url: body.url,
+        domain: extractDomain(body.url),
+        faviconUrl: body.faviconUrl,
+        accentColor: body.accentColor,
+        goal: body.goal,
+        answer: body.answer
+      });
+      return json(res, 200, { ok: true, id });
+    }
+
+    if (req.method === "PATCH" && req.url?.startsWith("/dialogs/")) {
+      const id = Number(decodeURIComponent(req.url.slice("/dialogs/".length)));
+      const body = await readJson(req);
+      storage.updateDialog(id, {
+        title: body.title,
+        accentColor: body.accentColor,
+        answer: body.answer
+      });
+      return json(res, 200, { ok: true });
+    }
+
     if (req.method === "GET" && req.url === "/projects") {
       return json(res, 200, { projects: storage.listProjects() });
     }
@@ -69,7 +111,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && req.url === "/settings") {
-      const keys = ["provider", "model", "baseUrl"];
+      const keys = ["provider", "model", "baseUrl", "onboarding_complete", "use_heuristic"];
       const settings: Record<string, string> = {};
       for (const key of keys) {
         const value = storage.getSetting(key);
@@ -104,14 +146,21 @@ const server = http.createServer(async (req, res) => {
 
       const runStartedAt = new Date().toISOString();
       const runStart = Date.now();
-      let success = true;
-      let errorMessage: string | undefined;
 
       try {
         const result = await extractUniversal(
           { url: body.url, goal: body.goal, maxItems: body.maxItems, mode: body.mode ?? "auto" },
           { capture: { capture: ({ url }) => capturePage({ url }) }, model }
         );
+
+        const dialogId = storage.createDialog({
+          title: result.verification.title || body.goal.slice(0, 60),
+          url: body.url,
+          domain: extractDomain(body.url),
+          faviconUrl: result.capture.favicon,
+          goal: body.goal,
+          answer: result.answer
+        });
 
         storage.recordRun({
           startedAt: runStartedAt,
@@ -124,10 +173,9 @@ const server = http.createServer(async (req, res) => {
           issues: result.verification.issues
         });
 
-        return json(res, 200, result);
+        return json(res, 200, { ...result, dialogId });
       } catch (error) {
-        success = false;
-        errorMessage = error instanceof Error ? error.message : String(error);
+        const errorMessage = error instanceof Error ? error.message : String(error);
         storage.recordRun({
           startedAt: runStartedAt,
           durationMs: Date.now() - runStart,
@@ -174,7 +222,7 @@ function requireKey(key?: string): string {
 }
 
 function parseProvider(value: string): ModelProviderId {
-  if (value === "openai" || value === "fireworks" || value === "openai-compatible") return value;
+  if (value in MODEL_PROVIDER_PRESETS) return value as ModelProviderId;
   throw new Error(`Unknown provider "${value}".`);
 }
 
@@ -184,6 +232,15 @@ function providerApiKey(provider: ModelProviderId): string | undefined {
 
 function nonEmpty(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function extractDomain(url: string): string {
+  try {
+    const u = new URL(url);
+    return u.hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
 }
 
 function findWorkspaceRoot(start: string): string {

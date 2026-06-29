@@ -12,11 +12,11 @@ server.tool(
   {
     url: z.string().url(),
     goal: z.string().min(1),
-    provider: z.enum(["openai", "fireworks", "openai-compatible"]).optional(),
+    provider: z.string().optional(),
     heuristic: z.boolean().optional()
   },
   async ({ url, goal, provider, heuristic }) => {
-    const selectedProvider = provider ?? parseProvider(process.env.PARSEWRIGHT_PROVIDER ?? "openai");
+    const selectedProvider = parseProvider(provider ?? process.env.PARSEWRIGHT_PROVIDER ?? "openai");
     const model = heuristic
       ? new HeuristicGateway()
       : createModelGateway({
@@ -57,7 +57,7 @@ function requireKey(key?: string): string {
 }
 
 function parseProvider(value: string): ModelProviderId {
-  if (value === "openai" || value === "fireworks" || value === "openai-compatible") return value;
+  if (value in MODEL_PROVIDER_PRESETS) return value as ModelProviderId;
   throw new Error(`Unknown provider "${value}".`);
 }
 

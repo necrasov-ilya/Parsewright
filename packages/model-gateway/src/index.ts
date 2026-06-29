@@ -65,6 +65,7 @@ export interface VerifyAndComposeInput {
 export interface VerifyAndComposeResult {
   answersGoal: boolean;
   answer: string;
+  title: string;
   issues: string[];
 }
 
@@ -75,7 +76,27 @@ export interface OpenAICompatibleOptions {
   provider?: ModelProviderId;
 }
 
-export type ModelProviderId = "openai" | "fireworks" | "openai-compatible";
+export type ModelProviderId =
+  | "openai"
+  | "fireworks"
+  | "anthropic"
+  | "google"
+  | "groq"
+  | "together"
+  | "mistral"
+  | "deepseek"
+  | "openrouter"
+  | "xai"
+  | "perplexity"
+  | "cohere"
+  | "cerebras"
+  | "sambanova"
+  | "novita"
+  | "hyperbolic"
+  | "lepton"
+  | "ai21"
+  | "siliconflow"
+  | "openai-compatible";
 
 export interface ModelProviderPreset {
   id: ModelProviderId;
@@ -83,6 +104,7 @@ export interface ModelProviderPreset {
   baseUrl: string;
   defaultModel: string;
   envKey: string;
+  docsUrl?: string;
 }
 
 export const MODEL_PROVIDER_PRESETS: Record<ModelProviderId, ModelProviderPreset> = {
@@ -91,18 +113,156 @@ export const MODEL_PROVIDER_PRESETS: Record<ModelProviderId, ModelProviderPreset
     label: "OpenAI",
     baseUrl: "https://api.openai.com/v1",
     defaultModel: "gpt-4.1-mini",
-    envKey: "OPENAI_API_KEY"
+    envKey: "OPENAI_API_KEY",
+    docsUrl: "https://platform.openai.com/api-keys"
   },
   fireworks: {
     id: "fireworks",
     label: "Fireworks AI",
     baseUrl: "https://api.fireworks.ai/inference/v1",
     defaultModel: "accounts/fireworks/models/deepseek-v4-pro",
-    envKey: "FIREWORKS_API_KEY"
+    envKey: "FIREWORKS_API_KEY",
+    docsUrl: "https://fireworks.ai/account/api-keys"
+  },
+  anthropic: {
+    id: "anthropic",
+    label: "Anthropic",
+    baseUrl: "https://api.anthropic.com/v1",
+    defaultModel: "claude-sonnet-4-20250514",
+    envKey: "ANTHROPIC_API_KEY",
+    docsUrl: "https://console.anthropic.com/settings/keys"
+  },
+  google: {
+    id: "google",
+    label: "Google Gemini",
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+    defaultModel: "gemini-2.0-flash",
+    envKey: "GOOGLE_API_KEY",
+    docsUrl: "https://aistudio.google.com/apikey"
+  },
+  groq: {
+    id: "groq",
+    label: "Groq",
+    baseUrl: "https://api.groq.com/openai/v1",
+    defaultModel: "llama-3.3-70b-versatile",
+    envKey: "GROQ_API_KEY",
+    docsUrl: "https://console.groq.com/keys"
+  },
+  together: {
+    id: "together",
+    label: "Together AI",
+    baseUrl: "https://api.together.xyz/v1",
+    defaultModel: "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+    envKey: "TOGETHER_API_KEY",
+    docsUrl: "https://api.together.ai/settings/api-keys"
+  },
+  mistral: {
+    id: "mistral",
+    label: "Mistral AI",
+    baseUrl: "https://api.mistral.ai/v1",
+    defaultModel: "mistral-large-latest",
+    envKey: "MISTRAL_API_KEY",
+    docsUrl: "https://console.mistral.ai/api-keys"
+  },
+  deepseek: {
+    id: "deepseek",
+    label: "DeepSeek",
+    baseUrl: "https://api.deepseek.com/v1",
+    defaultModel: "deepseek-chat",
+    envKey: "DEEPSEEK_API_KEY",
+    docsUrl: "https://platform.deepseek.com/api_keys"
+  },
+  openrouter: {
+    id: "openrouter",
+    label: "OpenRouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    defaultModel: "openai/gpt-4o-mini",
+    envKey: "OPENROUTER_API_KEY",
+    docsUrl: "https://openrouter.ai/keys"
+  },
+  xai: {
+    id: "xai",
+    label: "xAI (Grok)",
+    baseUrl: "https://api.x.ai/v1",
+    defaultModel: "grok-3-mini",
+    envKey: "XAI_API_KEY",
+    docsUrl: "https://console.x.ai"
+  },
+  perplexity: {
+    id: "perplexity",
+    label: "Perplexity",
+    baseUrl: "https://api.perplexity.ai",
+    defaultModel: "sonar",
+    envKey: "PERPLEXITY_API_KEY",
+    docsUrl: "https://www.perplexity.ai/settings/api"
+  },
+  cohere: {
+    id: "cohere",
+    label: "Cohere",
+    baseUrl: "https://api.cohere.ai/v1",
+    defaultModel: "command-r-plus",
+    envKey: "COHERE_API_KEY",
+    docsUrl: "https://dashboard.cohere.com/api-keys"
+  },
+  cerebras: {
+    id: "cerebras",
+    label: "Cerebras",
+    baseUrl: "https://api.cerebras.ai/v1",
+    defaultModel: "llama-3.3-70b",
+    envKey: "CEREBRAS_API_KEY",
+    docsUrl: "https://cloud.cerebras.ai"
+  },
+  sambanova: {
+    id: "sambanova",
+    label: "SambaNova",
+    baseUrl: "https://api.sambanova.ai/v1",
+    defaultModel: "Meta-Llama-3.3-70B-Instruct",
+    envKey: "SAMBANOVA_API_KEY",
+    docsUrl: "https://cloud.sambanova.ai/apis"
+  },
+  novita: {
+    id: "novita",
+    label: "Novita AI",
+    baseUrl: "https://api.novita.ai/v3/openai",
+    defaultModel: "deepseek/deepseek-v3-0324",
+    envKey: "NOVITA_API_KEY",
+    docsUrl: "https://novita.ai/get-key"
+  },
+  hyperbolic: {
+    id: "hyperbolic",
+    label: "Hyperbolic",
+    baseUrl: "https://api.hyperbolic.xyz/v1",
+    defaultModel: "meta-llama/Meta-Llama-3.1-405B-Instruct",
+    envKey: "HYPERBOLIC_API_KEY",
+    docsUrl: "https://app.hyperbolic.xyz/settings"
+  },
+  lepton: {
+    id: "lepton",
+    label: "Lepton AI",
+    baseUrl: "https://api.lepton.ai/api/v1",
+    defaultModel: "gpt-4o-mini",
+    envKey: "LEPTON_API_KEY",
+    docsUrl: "https://www.lepton.ai/dashboard"
+  },
+  ai21: {
+    id: "ai21",
+    label: "AI21 Labs",
+    baseUrl: "https://api.ai21.com/v1",
+    defaultModel: "jamba-1.5-large",
+    envKey: "AI21_API_KEY",
+    docsUrl: "https://studio.ai21.com/account/api-key"
+  },
+  siliconflow: {
+    id: "siliconflow",
+    label: "SiliconFlow",
+    baseUrl: "https://api.siliconflow.cn/v1",
+    defaultModel: "deepseek-ai/DeepSeek-V3",
+    envKey: "SILICONFLOW_API_KEY",
+    docsUrl: "https://cloud.siliconflow.cn/account/ak"
   },
   "openai-compatible": {
     id: "openai-compatible",
-    label: "OpenAI-compatible",
+    label: "Custom (OpenAI-compatible)",
     baseUrl: "https://api.openai.com/v1",
     defaultModel: "gpt-4.1-mini",
     envKey: "OPENAI_API_KEY"
@@ -190,6 +350,7 @@ export class OpenAICompatibleGateway implements ModelGateway {
     return {
       answersGoal: Boolean(parsed.answersGoal),
       answer: typeof parsed.answer === "string" ? parsed.answer : "",
+      title: typeof parsed.title === "string" ? parsed.title : "",
       issues: Array.isArray(parsed.issues) ? parsed.issues.map(String) : []
     };
   }
@@ -274,10 +435,10 @@ export class HeuristicGateway implements ModelGateway {
   async verifyAndCompose(input: VerifyAndComposeInput): Promise<VerifyAndComposeResult> {
     const entries = Object.entries(input.data).filter(([, value]) => value !== null && value !== undefined && value !== "");
     if (entries.length === 0) {
-      return { answersGoal: false, answer: "No data was extracted from the page.", issues: ["empty_result"] };
+      return { answersGoal: false, answer: "No data was extracted from the page.", title: "Empty result", issues: ["empty_result"] };
     }
     const summary = entries.map(([key, value]) => `${key}: ${value}`).join(", ");
-    return { answersGoal: true, answer: summary, issues: [] };
+    return { answersGoal: true, answer: summary, title: input.goal.slice(0, 40), issues: [] };
   }
 }
 
@@ -403,6 +564,7 @@ function buildVerifyAndComposeMessages(input: VerifyAndComposeInput): Array<{ ro
         requiredShape: {
           answersGoal: true,
           answer: "natural language answer in the user's language",
+          title: "short dialog title (3-6 words) in the user's language",
           issues: ["list any problems, empty if all good"]
         }
       })
@@ -451,7 +613,8 @@ const VERIFY_AND_COMPOSE_PROMPT = [
   "   - For 'collection' strategy with ranking: state the best item and mention the total count (e.g. 'Found 20 offers. Cheapest: X for Y.').",
   "   - For 'collection' strategy without ranking: summarize what was found.",
   "   - For 'summary' strategy: write a short digest of the page content.",
-  "3. List any issues: missing fields, wrong values, empty results, or mismatches with the goal. Empty array if all good.",
+  "3. Provide a short dialog title (3-6 words) that describes what was extracted. This title will be shown in the sidebar. Write it in the user's language.",
+  "4. List any issues: missing fields, wrong values, empty results, or mismatches with the goal. Empty array if all good.",
   "Be honest. If the data does not answer the goal, say so in the answer and list the issues."
 ].join("\n");
 

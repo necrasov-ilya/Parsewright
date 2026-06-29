@@ -11,6 +11,8 @@ const LOGO_SCALE = 0.5;
 
 export function LaunchSplash({ onComplete }: LaunchSplashProps): ReactElement {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const onCompleteRef = useRef(onComplete);
+  onCompleteRef.current = onComplete;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -99,7 +101,7 @@ export function LaunchSplash({ onComplete }: LaunchSplashProps): ReactElement {
 
       if (!completed) {
         completed = true;
-        onComplete();
+        onCompleteRef.current();
       }
     };
 
@@ -111,7 +113,7 @@ export function LaunchSplash({ onComplete }: LaunchSplashProps): ReactElement {
       window.cancelAnimationFrame(frameId);
       window.removeEventListener("resize", resizeCanvas);
     };
-  }, [onComplete]);
+  }, []);
 
   return (
     <div className="launch-splash" aria-hidden="true">
