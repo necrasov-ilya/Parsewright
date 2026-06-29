@@ -1,5 +1,23 @@
 import { createManifestId, ParsewrightManifestSchema, type ExtractionStrategy, type ParsewrightManifest } from "@parsewright/manifest";
-import type { PageContext } from "@parsewright/page-reducer";
+import type { PageContext, StructuredDataBlock, CandidateElement, RepeatedGroup, GoalSection } from "@parsewright/page-reducer";
+
+export interface TokenUsage {
+  promptTokens: number;
+  completionTokens: number;
+}
+
+export interface CodeGenInput {
+  manifest: ParsewrightManifest;
+  language: "python" | "javascript" | "curl";
+  includeDocs: boolean;
+  extraRequirements?: string;
+  onChunk?: (text: string) => void;
+}
+
+export interface CodeGenResult {
+  code: string;
+  usage: TokenUsage;
+}
 
 export interface ModelGateway {
   planStrategy(input: PlanStrategyInput): Promise<ExtractionStrategy>;
@@ -7,6 +25,9 @@ export interface ModelGateway {
   repairManifest?(input: RepairManifestInput): Promise<ParsewrightManifest>;
   classifyCandidates?(input: ClassifyCandidatesInput): Promise<CandidateClassification[]>;
   verifyAndCompose(input: VerifyAndComposeInput): Promise<VerifyAndComposeResult>;
+  generateCode?(input: CodeGenInput): Promise<CodeGenResult>;
+  getAccumulatedUsage(): TokenUsage;
+  resetUsage(): void;
 }
 
 export interface PlanStrategyInput {
@@ -23,6 +44,11 @@ export interface GenerateManifestInput {
   title?: string;
   html: string;
   pageContext?: PageContext;
+  outline?: string;
+  structuredData?: StructuredDataBlock[];
+  candidates?: CandidateElement[];
+  repeatedGroups?: RepeatedGroup[];
+  goalRelevantSections?: GoalSection[];
 }
 
 export interface RepairManifestInput extends GenerateManifestInput {
@@ -293,11 +319,25 @@ export function createModelGateway(config: ModelRuntimeConfig): OpenAICompatible
 export class OpenAICompatibleGateway implements ModelGateway {
   private readonly baseUrl: string;
   private readonly model: string;
+  private accumulatedUsage: TokenUsage = { promptTokens: 0, completionTokens: 0 };
 
   constructor(private readonly options: OpenAICompatibleOptions) {
     const preset = options.provider ? MODEL_PROVIDER_PRESETS[options.provider] : MODEL_PROVIDER_PRESETS.openai;
     this.baseUrl = normalizeBaseUrl(options.baseUrl ?? preset.baseUrl);
     this.model = options.model ?? preset.defaultModel;
+  }
+
+  getAccumulatedUsage(): TokenUsage {
+    return { ...this.accumulatedUsage };
+  }
+
+  resetUsage(): void {
+    this.accumulatedUsage = { promptTokens: 0, completionTokens: 0 };
+  }
+
+  private trackUsage(usage: TokenUsage): void {
+    this.accumulatedUsage.promptTokens += usage.promptTokens;
+    this.accumulatedUsage.completionTokens += usage.completionTokens;
   }
 
   async planStrategy(input: PlanStrategyInput): Promise<ExtractionStrategy> {
@@ -355,6 +395,77 @@ export class OpenAICompatibleGateway implements ModelGateway {
     };
   }
 
+  async generateCode(input: CodeGenInput): Promise<CodeGenResult> {
+    const messages = buildCodeGenMessages(input);
+    const stream = !!input.onChunk;
+
+    if (!stream) {
+      const content = await this.chat({ messages });
+      return { code: content, usage: this.getAccumulatedUsage() };
+    }
+
+    const response = await fetch(`${this.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${this.options.apiKey}`
+      },
+      body: JSON.stringify({
+        model: this.model,
+        temperature: 0,
+        stream: true,
+        messages
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Model request failed with ${response.status}: ${await response.text()}`);
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error("No response body stream.");
+
+    const decoder = new TextDecoder();
+    let fullContent = "";
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || !trimmed.startsWith("data: ")) continue;
+        const data = trimmed.slice(6);
+        if (data === "[DONE]") continue;
+        try {
+          const parsed = JSON.parse(data) as {
+            choices?: Array<{ delta?: { content?: string } }>;
+            usage?: { prompt_tokens?: number; completion_tokens?: number };
+          };
+          const delta = parsed.choices?.[0]?.delta?.content;
+          if (delta) {
+            fullContent += delta;
+            input.onChunk?.(delta);
+          }
+          if (parsed.usage) {
+            this.trackUsage({
+              promptTokens: parsed.usage.prompt_tokens ?? 0,
+              completionTokens: parsed.usage.completion_tokens ?? 0
+            });
+          }
+        } catch {
+          // partial JSON, ignore
+        }
+      }
+    }
+
+    return { code: fullContent, usage: this.getAccumulatedUsage() };
+  }
+
   private async chat(params: { messages: Array<{ role: "system" | "user"; content: string }>; responseFormat?: "json_object" }): Promise<string> {
     const response = await fetch(`${this.baseUrl}/chat/completions`, {
       method: "POST",
@@ -374,9 +485,15 @@ export class OpenAICompatibleGateway implements ModelGateway {
       throw new Error(`Model request failed with ${response.status}: ${await response.text()}`);
     }
 
-    const json = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
+    const json = (await response.json()) as { choices?: Array<{ message?: { content?: string } }>; usage?: { prompt_tokens?: number; completion_tokens?: number } };
     const content = json.choices?.[0]?.message?.content;
     if (!content) throw new Error("Model returned an empty response.");
+    if (json.usage) {
+      this.trackUsage({
+        promptTokens: json.usage.prompt_tokens ?? 0,
+        completionTokens: json.usage.completion_tokens ?? 0
+      });
+    }
     return content;
   }
 
@@ -403,6 +520,16 @@ export class OpenAICompatibleGateway implements ModelGateway {
 }
 
 export class HeuristicGateway implements ModelGateway {
+  private accumulatedUsage: TokenUsage = { promptTokens: 0, completionTokens: 0 };
+
+  getAccumulatedUsage(): TokenUsage {
+    return { ...this.accumulatedUsage };
+  }
+
+  resetUsage(): void {
+    this.accumulatedUsage = { promptTokens: 0, completionTokens: 0 };
+  }
+
   async planStrategy(input: PlanStrategyInput): Promise<ExtractionStrategy> {
     const { heuristicStrategy } = await import("@parsewright/planner");
     return heuristicStrategy(input.goal);
@@ -440,6 +567,11 @@ export class HeuristicGateway implements ModelGateway {
     const summary = entries.map(([key, value]) => `${key}: ${value}`).join(", ");
     return { answersGoal: true, answer: summary, title: input.goal.slice(0, 40), issues: [] };
   }
+
+  async generateCode(input: CodeGenInput): Promise<CodeGenResult> {
+    const code = generateHeuristicCode(input.manifest, input.language, input.includeDocs);
+    return { code, usage: { promptTokens: 0, completionTokens: 0 } };
+  }
 }
 
 function defaultFieldNames(goal: string): string[] {
@@ -459,7 +591,7 @@ function normalizeStrategy(value: unknown): ExtractionStrategy {
       kind: "collection",
       fields: Array.isArray(obj.fields) ? obj.fields.map(String) : undefined,
       ranking: ranking && typeof ranking.objective === "string"
-        ? { objective: ranking.objective as "lowest_price" | "highest_score" | "relevance" | "none", topK: typeof ranking.topK === "number" ? ranking.topK : 20 }
+        ? { objective: normalizeObjective(ranking.objective), topK: typeof ranking.topK === "number" ? Math.min(ranking.topK, 100) : 20 }
         : undefined
     };
   }
@@ -467,6 +599,51 @@ function normalizeStrategy(value: unknown): ExtractionStrategy {
     return { kind: "summary", fields: Array.isArray(obj.fields) ? obj.fields.map(String) : undefined };
   }
   return { kind: "fields", fields: Array.isArray(obj.fields) ? obj.fields.map(String) : undefined };
+}
+
+const OBJECTIVE_ALIASES: Record<string, string> = {
+  "highest_price": "highest_price",
+  "max_price": "highest_price",
+  "most_expensive": "highest_price",
+  "priciest": "highest_price",
+  "lowest_price": "lowest_price",
+  "min_price": "lowest_price",
+  "cheapest": "lowest_price",
+  "min_cost": "lowest_price",
+  "highest_score": "highest_score",
+  "max_score": "highest_score",
+  "best_rated": "highest_score",
+  "top_rated": "highest_score",
+  "highest_rating": "highest_score",
+  "lowest_score": "lowest_score",
+  "min_score": "lowest_score",
+  "worst_rated": "lowest_score",
+  "relevance": "relevance",
+  "relevant": "relevance",
+  "most_relevant": "relevance",
+  "newest": "newest",
+  "latest": "newest",
+  "most_recent": "newest",
+  "oldest": "oldest",
+  "earliest": "oldest",
+  "none": "none",
+  "no_ranking": "none",
+  "": "none"
+};
+
+function normalizeObjective(raw: string): "lowest_price" | "highest_price" | "highest_score" | "lowest_score" | "relevance" | "newest" | "oldest" | "none" {
+  const lower = raw.toLowerCase().trim();
+  if (OBJECTIVE_ALIASES[lower]) return OBJECTIVE_ALIASES[lower] as any;
+  if (lower.includes("price") || lower.includes("cost") || lower.includes("expensive") || lower.includes("cheap")) {
+    return lower.includes("high") || lower.includes("max") || lower.includes("most") ? "highest_price" : "lowest_price";
+  }
+  if (lower.includes("score") || lower.includes("rating") || lower.includes("rated")) {
+    return lower.includes("low") || lower.includes("min") || lower.includes("worst") ? "lowest_score" : "highest_score";
+  }
+  if (lower.includes("relevan") || lower.includes("match") || lower.includes("best")) return "relevance";
+  if (lower.includes("new") || lower.includes("recent") || lower.includes("latest")) return "newest";
+  if (lower.includes("old") || lower.includes("earliest")) return "oldest";
+  return "none";
 }
 
 function buildPlanStrategyMessages(input: PlanStrategyInput): Array<{ role: "system" | "user"; content: string }> {
@@ -496,7 +673,7 @@ function buildPlanStrategyMessages(input: PlanStrategyInput): Array<{ role: "sys
         requiredShape: {
           kind: "fields | collection | summary",
           fields: ["optional list of expected field names"],
-          ranking: { objective: "lowest_price | highest_score | relevance | none", topK: 20 }
+          ranking: { objective: "lowest_price | highest_price | highest_score | lowest_score | relevance | newest | oldest | none", topK: 20 }
         }
       })
     }
@@ -504,6 +681,53 @@ function buildPlanStrategyMessages(input: PlanStrategyInput): Array<{ role: "sys
 }
 
 function buildGenerateMessages(input: GenerateManifestInput): Array<{ role: "system" | "user"; content: string }> {
+  const hasStructuredData = input.structuredData && input.structuredData.length > 0;
+  const hasOutline = input.outline && input.outline.length > 0;
+
+  const context: Record<string, unknown> = {};
+
+  if (hasStructuredData) {
+    context.structuredData = input.structuredData!.map((block) => ({
+      kind: block.kind,
+      text: block.text.slice(0, 4000)
+    }));
+  }
+
+  if (hasOutline) {
+    context.domOutline = input.outline;
+  }
+
+  if (input.candidates && input.candidates.length > 0) {
+    context.contentCandidates = input.candidates.slice(0, 30).map((c) => ({
+      selector: c.selector,
+      tag: c.tag,
+      text: c.text.slice(0, 120),
+      attributes: c.attributes
+    }));
+  }
+
+  if (input.repeatedGroups && input.repeatedGroups.length > 0) {
+    context.repeatedGroups = input.repeatedGroups.map((group) => ({
+      selector: group.selector,
+      count: group.count,
+      fieldHints: group.fieldHints,
+      sampleText: group.sampleTexts[0]?.slice(0, 300)
+    }));
+  }
+
+  if (input.goalRelevantSections && input.goalRelevantSections.length > 0) {
+    context.goalRelevantSections = input.goalRelevantSections.map((section) => ({
+      selector: section.selector,
+      matchedKeywords: section.matchedKeywords,
+      text: section.text.slice(0, 300),
+      html: section.html
+    }));
+  }
+
+  if (!hasStructuredData && !hasOutline) {
+    context.reducedHtml = input.html.slice(0, 45000);
+  }
+
   return [
     { role: "system", content: SYSTEM_PROMPT },
     {
@@ -514,9 +738,7 @@ function buildGenerateMessages(input: GenerateManifestInput): Array<{ role: "sys
         goal: input.goal,
         strategy: input.strategy,
         pageTitle: input.title,
-        pageContext: input.pageContext ?? {
-          reducedHtml: input.html.slice(0, 45000)
-        },
+        pageContext: context,
         requiredShape: manifestShape(input.url, input.goal, input.strategy)
       })
     }
@@ -524,6 +746,43 @@ function buildGenerateMessages(input: GenerateManifestInput): Array<{ role: "sys
 }
 
 function buildRepairMessages(input: RepairManifestInput): Array<{ role: "system" | "user"; content: string }> {
+  const failingFields = input.issues
+    .filter((issue) => issue.field)
+    .map((issue) => issue.field!)
+    .filter(Boolean);
+
+  const failingSelectors = failingFields
+    .map((field) => {
+      const rules = input.previousManifest.fields as Record<string, { selector?: string }> | undefined;
+      const colRules = input.previousManifest.collections as Record<string, { selector?: string; fields?: Record<string, { selector?: string }> }> | undefined;
+      if (rules?.[field]?.selector) return rules[field].selector!;
+      for (const col of Object.values(colRules ?? {})) {
+        if (col?.fields?.[field]?.selector) return col.fields[field].selector!;
+      }
+      return null;
+    })
+    .filter(Boolean) as string[];
+
+  const context: Record<string, unknown> = {};
+
+  if (failingSelectors.length > 0 && input.html) {
+    context.failingSelectors = failingSelectors;
+    context.targetedHtmlSections = failingSelectors.map((sel) => {
+      const start = input.html.indexOf(sel.split(/[.#\[]/)[0]);
+      if (start === -1) return null;
+      return input.html.slice(Math.max(0, start - 500), Math.min(input.html.length, start + 4000));
+    }).filter(Boolean);
+  }
+
+  if (input.outline) context.domOutline = input.outline;
+  if (input.structuredData && input.structuredData.length > 0) {
+    context.structuredData = input.structuredData.map((b) => ({ kind: b.kind, text: b.text.slice(0, 2000) }));
+  }
+
+  if (!context.targetedHtmlSections && !context.domOutline) {
+    context.reducedHtml = input.html.slice(0, 30000);
+  }
+
   return [
     { role: "system", content: SYSTEM_PROMPT },
     {
@@ -537,9 +796,7 @@ function buildRepairMessages(input: RepairManifestInput): Array<{ role: "system"
         previousManifest: input.previousManifest,
         previousData: input.data,
         validationIssues: input.issues,
-        pageContext: input.pageContext ?? {
-          reducedHtml: input.html.slice(0, 45000)
-        },
+        pageContext: context,
         requiredShape: manifestShape(input.url, input.goal, input.strategy)
       })
     }
@@ -580,9 +837,20 @@ const SYSTEM_PROMPT = [
   "- If strategy.kind is 'fields', generate page-level field selectors (one value per field).",
   "- If strategy.kind is 'collection', generate a collection with a stable item selector and relative field selectors. Use :scope when extracting text or attributes from the item itself.",
   "- If strategy.kind is 'summary', generate field selectors for the key information needed to summarize the page.",
+  "CRITICAL: Selectors are evaluated against static HTML using standard CSS selectors only.",
+  "Do NOT use Playwright-specific pseudo-classes: :has-text, :text, :visible, :has, :not(:has-text), :is, :where.",
+  "Do NOT use XPath or Playwright engine syntax. Only standard CSS3 selectors: tag, .class, #id, [attr], :nth-child, :first-child, :last-child, :not(), :empty, >, +, ~, :scope.",
+  "You will receive page context in one or more of these formats:",
+  "- domOutline: a compact tree of the DOM structure showing tags, classes, ids, and text samples for leaf nodes. Use this to understand page structure and find the right selectors.",
+  "- structuredData: JSON-LD and meta tags from the page. Use these to understand field names and data types. Schema.org properties map to itemprop attributes in HTML.",
+  "- contentCandidates: elements that likely contain the data, with selectors and text samples.",
+  "- repeatedGroups: groups of similar elements (product cards, table rows, list items) with their selectors and sample text.",
+  "- goalRelevantSections: HTML sections that contain text matching keywords from the user's goal. These are the most likely locations of the data you need. Pay close attention to these.",
+  "- targetedHtmlSections: specific HTML snippets around failing selectors (for repair only).",
+  "- reducedHtml: raw HTML fallback (only if outline is not available).",
+  "Always prefer domOutline and structuredData over reducedHtml. They are more compact and reliable.",
   "Prefer stable selectors in this order: itemprop, data-testid/data-test, id, aria-label, semantic tags, then classes.",
   "Avoid random-looking CSS module, Tailwind utility, hashed, and framework-generated classes when possible.",
-  "Use JSON-LD/meta context to understand the page, but v0 manifest fields must use CSS selectors against HTML.",
   "Every field listed in strategy.fields must appear in both schema and fields (or collections for collection strategy).",
   "Use type number only when a numeric transform can reliably convert the extracted text.",
   "Use transforms only from this list: trim, number, price, lowercase, uppercase.",
@@ -599,7 +867,16 @@ const PLAN_STRATEGY_PROMPT = [
   "- 'collection': the user wants to find, compare, list, or rank multiple items (e.g. all offers, cheapest product, search results).",
   "- 'summary': the user wants a natural-language overview or digest of the page content.",
   "If the strategy is 'fields' or 'summary', list the expected field names in the 'fields' array when they can be inferred from the goal.",
-  "If the strategy is 'collection' and the user wants ranking (best, cheapest, top, compare), set ranking.objective accordingly. Use 'none' when no ranking is needed.",
+  "If the strategy is 'collection' and the user wants ranking, set ranking.objective accordingly:",
+  "- 'lowest_price': user wants cheapest (cheapest, lowest price, дешевый).",
+  "- 'highest_price': user wants most expensive (most expensive, highest price, дорогой).",
+  "- 'highest_score': user wants best rated (best, top rated, highest rating, лучший по рейтингу).",
+  "- 'lowest_score': user wants worst rated (worst, lowest rating).",
+  "- 'relevance': user wants most relevant to the query.",
+  "- 'newest': user wants most recent (newest, latest, recent, новейший).",
+  "- 'oldest': user wants oldest (oldest, earliest, старейший).",
+  "- 'none': no specific ranking needed.",
+  "Use 'none' when no ranking is needed.",
   "Respond in the same language as the user's goal when naming fields."
 ].join("\n");
 
@@ -626,6 +903,161 @@ const CANDIDATE_CLASSIFIER_PROMPT = [
   "Use confidence from 0 to 1.",
   "Keep reasons short and concrete."
 ].join("\n");
+
+const CODE_GEN_PROMPT = [
+  "You generate executable scraping scripts from Parsewright manifests.",
+  "The manifest contains CSS selectors, schema, and source configuration for a web page.",
+  "Generate clean, production-ready code that uses the manifest to extract data from the page.",
+  "If documentation is requested, include clear comments and a usage section.",
+  "Do not include markdown code fences. Output only the raw code.",
+  "The code must:",
+  "- Fetch the page HTML (using requests/httpx for Python, fetch for JavaScript, curl for shell)",
+  "- Apply the manifest selectors to extract fields",
+  "- Handle errors gracefully",
+  "- Print or return the extracted data as JSON"
+].join("\n");
+
+function buildCodeGenMessages(input: CodeGenInput): Array<{ role: "system" | "user"; content: string }> {
+  const langName = input.language === "python" ? "Python" : input.language === "javascript" ? "JavaScript (Node.js)" : "Shell (curl + jq)";
+  const libs = input.language === "python"
+    ? "Use BeautifulSoup4 (bs4) for HTML parsing and requests for HTTP."
+    : input.language === "javascript"
+    ? "Use cheerio for HTML parsing and node-fetch for HTTP."
+    : "Use curl for fetching and jq for parsing. Use grep/sed for CSS selector emulation where jq is insufficient.";
+
+  return [
+    { role: "system", content: CODE_GEN_PROMPT },
+    {
+      role: "user",
+      content: JSON.stringify({
+        task: "generate_extraction_script",
+        language: langName,
+        libraries: libs,
+        includeDocs: input.includeDocs,
+        extraRequirements: input.extraRequirements ?? undefined,
+        manifest: input.manifest,
+        fields: input.manifest.fields,
+        collections: input.manifest.collections,
+        source: input.manifest.source,
+        schema: input.manifest.schema
+      })
+    }
+  ];
+}
+
+function generateHeuristicCode(manifest: ParsewrightManifest, language: "python" | "javascript" | "curl", includeDocs: boolean): string {
+  const url = manifest.source?.url ?? "https://example.com";
+  const fields = manifest.fields ?? {};
+  const collections = manifest.collections ?? {};
+
+  if (language === "python") {
+    const lines: string[] = [];
+    if (includeDocs) {
+      lines.push('"""');
+      lines.push(`Parsewright extraction script for: ${manifest.goal ?? url}`);
+      lines.push("");
+      lines.push("Requirements: pip install requests beautifulsoup4");
+      lines.push('"""');
+      lines.push("");
+    }
+    lines.push("import requests");
+    lines.push("from bs4 import BeautifulSoup");
+    lines.push("import json");
+    lines.push("");
+    lines.push(`URL = "${url}"`);
+    lines.push("");
+    lines.push("response = requests.get(URL)");
+    lines.push('soup = BeautifulSoup(response.text, "html.parser")');
+    lines.push("");
+    lines.push("result = {}");
+    for (const [name, rule] of Object.entries(fields)) {
+      lines.push(`result["${name}"] = soup.select_one("${rule.selector}")?.get_text(strip=True) if soup.select_one("${rule.selector}") else None`);
+    }
+    for (const [name, col] of Object.entries(collections)) {
+      lines.push("");
+      lines.push(`items_${name} = []`);
+      lines.push(`for el in soup.select("${col.selector}"):`);
+      const colFields = col.fields ?? {};
+      if (Object.keys(colFields).length === 0) {
+        lines.push(`    items_${name}.append(el.get_text(strip=True))`);
+      } else {
+        lines.push(`    item = {}`);
+        for (const [fname, frule] of Object.entries(colFields)) {
+          const sel = frule.selector === ":scope" ? "el" : `el.select_one("${frule.selector}")`;
+          lines.push(`    item["${fname}"] = ${sel}.get_text(strip=True) if ${sel} else None`);
+        }
+        lines.push(`    items_${name}.append(item)`);
+      }
+      lines.push(`result["${name}"] = items_${name}`);
+    }
+    lines.push("");
+    lines.push('print(json.dumps(result, ensure_ascii=False, indent=2))');
+    return lines.join("\n");
+  }
+
+  if (language === "javascript") {
+    const lines: string[] = [];
+    if (includeDocs) {
+      lines.push("// Parsewright extraction script");
+      lines.push(`// Goal: ${manifest.goal ?? url}`);
+      lines.push("// Requirements: npm install cheerio node-fetch");
+      lines.push("");
+    }
+    lines.push('import fetch from "node-fetch";');
+    lines.push('import * as cheerio from "cheerio";');
+    lines.push("");
+    lines.push(`const URL = "${url}";`);
+    lines.push("");
+    lines.push("async function extract() {");
+    lines.push("  const response = await fetch(URL);");
+    lines.push("  const html = await response.text();");
+    lines.push("  const $ = cheerio.load(html);");
+    lines.push("  const result = {};");
+    for (const [name, rule] of Object.entries(fields)) {
+      lines.push(`  result["${name}"] = $("${rule.selector}").first().text().trim() || null;`);
+    }
+    for (const [name, col] of Object.entries(collections)) {
+      lines.push(`  result["${name}"] = []`);
+      lines.push(`  $("${col.selector}").each((_, el) => {`);
+      const colFields = col.fields ?? {};
+      if (Object.keys(colFields).length === 0) {
+        lines.push(`    result["${name}"].push($(el).text().trim());`);
+      } else {
+        lines.push(`    const item = {};`);
+        for (const [fname, frule] of Object.entries(colFields)) {
+          const sel = frule.selector === ":scope" ? "$(el)" : `$(el).find("${frule.selector}")`;
+          lines.push(`    item["${fname}"] = ${sel}.text().trim() || null;`);
+        }
+        lines.push(`    result["${name}"].push(item);`);
+      }
+      lines.push(`  });`);
+    }
+    lines.push("  return result;");
+    lines.push("}");
+    lines.push("");
+    lines.push("extract().then(r => console.log(JSON.stringify(r, null, 2)));");
+    return lines.join("\n");
+  }
+
+  // curl
+  const lines: string[] = [];
+  if (includeDocs) {
+    lines.push("# Parsewright extraction script (curl)");
+    lines.push(`# Goal: ${manifest.goal ?? url}`);
+    lines.push("# Requires: curl, jq, grep");
+    lines.push("");
+  }
+  lines.push(`URL="${url}"`);
+  lines.push('HTML=$(curl -s "$URL")');
+  lines.push("");
+  for (const [name, rule] of Object.entries(fields)) {
+    lines.push(`# Extract ${name} using selector: ${rule.selector}`);
+    lines.push(`${name}=$(echo "$HTML" | grep -oP '(?<=<[^>]*class="[^"]*")[^"]*' | head -1)`);
+    lines.push("");
+  }
+  lines.push('echo "{\"url\": \"$URL\", \"status\": \"ok\"}" | jq .');
+  return lines.join("\n");
+}
 
 function manifestShape(url: string, goal: string, strategy: ExtractionStrategy) {
   const id = createManifestId(url, goal);

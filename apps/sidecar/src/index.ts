@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { capturePage } from "@parsewright/capture";
 import { extractUniversal } from "@parsewright/core";
-import { createModelGateway, HeuristicGateway, listModelProviders, MODEL_PROVIDER_PRESETS, type ModelProviderId } from "@parsewright/model-gateway";
+import { createModelGateway, HeuristicGateway, listModelProviders, MODEL_PROVIDER_PRESETS, type ModelProviderId, type CodeGenInput } from "@parsewright/model-gateway";
 import { ParsewrightStorage, defaultDataDir, ensureDataDir } from "@parsewright/storage";
 
 const port = Number(process.env.PARSEWRIGHT_SIDECAR_PORT ?? 47831);
@@ -165,7 +165,14 @@ const server = http.createServer(async (req, res) => {
       try {
         const result = await extractUniversal(
           { url: body.url, goal: body.goal, maxItems: body.maxItems, mode: body.mode ?? "auto" },
-          { capture: { capture: ({ url }) => capturePage({ url }) }, model }
+          {
+            capture: { capture: ({ url }) => capturePage({ url }) },
+            model,
+            manifestCache: {
+              get: (url, goal) => storage.getCachedManifest(url, goal),
+              set: (url, goal, manifest) => storage.setCachedManifest(url, goal, manifest)
+            }
+          }
         );
 
         const resultJson = {
@@ -228,6 +235,179 @@ const server = http.createServer(async (req, res) => {
         });
         throw error;
       }
+    }
+
+    if (req.method === "POST" && req.url === "/extract/stream") {
+      const body = await readJson(req);
+      const model = body.heuristic
+        ? new HeuristicGateway()
+        : createModelGateway({
+          provider: parseProvider(body.provider ?? process.env.PARSEWRIGHT_PROVIDER ?? "openai-compatible"),
+          apiKey: requireKey(nonEmpty(body.apiKey) ?? providerApiKey(parseProvider(body.provider ?? process.env.PARSEWRIGHT_PROVIDER ?? "openai-compatible"))),
+          baseUrl: nonEmpty(body.baseUrl) ?? process.env.PARSEWRIGHT_BASE_URL,
+          model: nonEmpty(body.model) ?? process.env.PARSEWRIGHT_MODEL
+        });
+
+      res.writeHead(200, {
+        "content-type": "text/event-stream",
+        "cache-control": "no-cache",
+        "connection": "keep-alive",
+        "access-control-allow-origin": "*",
+        "access-control-allow-methods": "GET, POST, DELETE, PATCH, OPTIONS",
+        "access-control-allow-headers": "content-type"
+      });
+
+      const send = (event: unknown) => {
+        res.write(`data: ${JSON.stringify(event)}\n\n`);
+      };
+
+      const runStartedAt = new Date().toISOString();
+      const runStart = Date.now();
+
+      try {
+        const result = await extractUniversal(
+          { url: body.url, goal: body.goal, maxItems: body.maxItems, mode: body.mode ?? "auto" },
+          {
+            capture: { capture: ({ url }) => capturePage({ url }) },
+            model,
+            onStage: (event) => send(event),
+            manifestCache: {
+              get: (url, goal) => storage.getCachedManifest(url, goal),
+              set: (url, goal, manifest) => storage.setCachedManifest(url, goal, manifest)
+            }
+          }
+        );
+
+        const resultJson = {
+          answer: result.answer,
+          data: result.data,
+          strategy: result.strategy,
+          table: result.table,
+          verification: result.verification,
+          validation: result.validation,
+          capture: result.capture,
+          manifest: result.manifest,
+          repaired: result.repaired,
+          usage: result.usage
+        };
+
+        const requestedDialogId = Number(body.dialogId);
+        const title = result.verification.title || body.goal.slice(0, 60);
+        const dialogId = Number.isFinite(requestedDialogId) && requestedDialogId > 0
+          ? requestedDialogId
+          : storage.createDialog({
+            title,
+            url: body.url,
+            domain: extractDomain(body.url),
+            faviconUrl: result.capture.favicon,
+            goal: body.goal,
+            answer: result.answer,
+            resultJson
+          });
+
+        if (dialogId === requestedDialogId) {
+          storage.updateDialog(dialogId, {
+            title,
+            url: body.url,
+            domain: extractDomain(body.url),
+            faviconUrl: result.capture.favicon,
+            goal: body.goal,
+            answer: result.answer,
+            resultJson
+          });
+        }
+
+        storage.recordRun({
+          startedAt: runStartedAt,
+          durationMs: Date.now() - runStart,
+          success: true,
+          answer: result.answer,
+          data: result.data,
+          validation: result.validation,
+          repaired: result.repaired,
+          issues: result.verification.issues
+        });
+
+        send({
+          stage: "done", status: "done",
+          data: {
+            answer: result.answer,
+            data: result.data,
+            strategy: result.strategy,
+            table: result.table,
+            verification: result.verification,
+            validation: result.validation,
+            capture: result.capture,
+            manifest: result.manifest,
+            repaired: result.repaired,
+            usage: result.usage,
+            dialogId
+          }
+        });
+        res.end();
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        storage.recordRun({
+          startedAt: runStartedAt,
+          durationMs: Date.now() - runStart,
+          success: false,
+          issues: [errorMessage]
+        });
+        send({ stage: "error", status: "error", data: { error: errorMessage } });
+        res.end();
+      }
+      return;
+    }
+
+    if (req.method === "POST" && req.url === "/codegen/stream") {
+      const body = await readJson(req);
+      const model = body.heuristic
+        ? new HeuristicGateway()
+        : createModelGateway({
+          provider: parseProvider(body.provider ?? process.env.PARSEWRIGHT_PROVIDER ?? "openai-compatible"),
+          apiKey: requireKey(nonEmpty(body.apiKey) ?? providerApiKey(parseProvider(body.provider ?? process.env.PARSEWRIGHT_PROVIDER ?? "openai-compatible"))),
+          baseUrl: nonEmpty(body.baseUrl) ?? process.env.PARSEWRIGHT_BASE_URL,
+          model: nonEmpty(body.model) ?? process.env.PARSEWRIGHT_MODEL
+        });
+
+      if (!model.generateCode) {
+        return json(res, 500, { error: "Code generation not supported by this gateway" });
+      }
+
+      res.writeHead(200, {
+        "content-type": "text/event-stream",
+        "cache-control": "no-cache",
+        "connection": "keep-alive",
+        "access-control-allow-origin": "*",
+        "access-control-allow-methods": "GET, POST, DELETE, PATCH, OPTIONS",
+        "access-control-allow-headers": "content-type"
+      });
+
+      const send = (event: unknown) => {
+        res.write(`data: ${JSON.stringify(event)}\n\n`);
+      };
+
+      try {
+        const codeGenInput: CodeGenInput = {
+          manifest: body.manifest,
+          language: body.language ?? "python",
+          includeDocs: body.includeDocs ?? true,
+          extraRequirements: body.extraRequirements,
+          onChunk: (text) => send({ type: "chunk", text })
+        };
+
+        send({ type: "start" });
+
+        const result = await model.generateCode(codeGenInput);
+
+        send({ type: "done", code: result.code, usage: result.usage });
+        res.end();
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        send({ type: "error", error: errorMessage });
+        res.end();
+      }
+      return;
     }
 
     return json(res, 404, { error: "not_found" });

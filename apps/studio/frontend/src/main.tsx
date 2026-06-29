@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from "lucide-react";
+import { EventsOn, EventsOff } from "../wailsjs/runtime/runtime";
 import { LaunchSplash } from "./components/LaunchSplash";
 import { Onboarding, type OnboardingConfig, type ProviderInfo } from "./components/Onboarding";
 import { Sidebar, type DialogInfo } from "./components/Sidebar";
 import { SettingsModal } from "./components/SettingsModal";
 import { UrlInput } from "./components/UrlInput";
-import { ChatFeed, type ChatRound, type ChatResult } from "./components/ChatFeed";
+import { ChatFeed, type ChatRound, type ChatResult, type AgentEvent } from "./components/ChatFeed";
 import { RightSidebar, type SidebarData } from "./components/RightSidebar";
+import { CodeGenDialog, type CodeGenParams } from "./components/CodeGenDialog";
 import "./styles.css";
 
 declare global {
@@ -16,6 +18,7 @@ declare global {
       main?: {
         App?: {
           Extract(input: ExtractInput): Promise<ExtractResult>;
+          GenerateCode(input: CodeGenInput): Promise<Record<string, unknown>>;
           Reset(): Promise<{ ok: boolean }>;
         };
       };
@@ -48,7 +51,20 @@ interface ExtractResult {
   capture: { url: string; finalUrl: string; title: string; favicon?: string; status?: number; timingMs: number };
   manifest: Record<string, unknown>;
   repaired: boolean;
+  usage?: { promptTokens: number; completionTokens: number };
   dialogId?: number;
+}
+
+interface CodeGenInput {
+  manifest: Record<string, unknown>;
+  language: string;
+  includeDocs: boolean;
+  extraRequirements: string;
+  provider: string;
+  baseUrl: string;
+  model: string;
+  apiKey: string;
+  heuristic: boolean;
 }
 
 const SIDECAR = "http://127.0.0.1:47831";
@@ -87,28 +103,12 @@ interface ConversationState {
   sidebarData: SidebarData | null;
 }
 
-const STAGE_DEFS: Array<{ id: string; text: string }> = [
-  { id: "capture", text: "Позвольте мне открыть страницу…" },
-  { id: "page_reduction", text: "Изучаю структуру страницы…" },
-  { id: "strategy", text: "Понял задачу. Определяю стратегию извлечения…" },
-  { id: "manifest", text: "Составляю алгоритм извлечения…" },
-  { id: "runner", text: "Применяю алгоритм…" },
-  { id: "validation", text: "Проверяю результат…" },
-  { id: "verify", text: "Формирую ответ…" }
-];
-
 function extractDomain(url: string): string {
-  try {
-    const u = new URL(url);
-    return u.hostname.replace(/^www\./, "");
-  } catch {
-    return url;
-  }
+  try { const u = new URL(url); return u.hostname.replace(/^www\./, ""); } catch { return url; }
 }
 
 function faviconForUrl(url: string): string {
-  const domain = extractDomain(url);
-  return `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
+  return `https://www.google.com/s2/favicons?domain=${extractDomain(url)}&sz=32`;
 }
 
 function resultToSidebarData(response: Pick<ExtractResult, "capture" | "manifest" | "strategy" | "validation" | "verification" | "repaired">): SidebarData {
@@ -133,21 +133,18 @@ function conversationFromDialog(dialog: DialogInfo): ConversationState {
     rounds: [{
       id: `dialog-${dialog.id}`,
       goal: dialog.goal,
-      stages: [],
+      events: [],
       result,
       error: null,
-      loading: false
+      loading: false,
+      usage: parsed?.usage
     }]
   };
 }
 
 function parseDialogResult(dialog: DialogInfo): ExtractResult | null {
   if (!dialog.result_json) return null;
-  try {
-    return JSON.parse(dialog.result_json) as ExtractResult;
-  } catch {
-    return null;
-  }
+  try { return JSON.parse(dialog.result_json) as ExtractResult; } catch { return null; }
 }
 
 function resultToChatResult(result: ExtractResult, dialogId: number): ChatResult {
@@ -158,6 +155,8 @@ function resultToChatResult(result: ExtractResult, dialogId: number): ChatResult
     table: result.table,
     verification: result.verification,
     repaired: result.repaired,
+    manifest: result.manifest,
+    usage: result.usage,
     dialogId
   };
 }
@@ -181,8 +180,15 @@ function App() {
   const [rightCollapsed, setRightCollapsed] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
+  const [codegenOpen, setCodegenOpen] = useState(false);
+  const [codegenManifest, setCodegenManifest] = useState<Record<string, unknown> | null>(null);
+  const [codegenChunks, setCodegenChunks] = useState<string[]>([]);
+  const [codegenDone, setCodegenDone] = useState(false);
+  const [codegenError, setCodegenError] = useState<string | null>(null);
+
   const splashDoneRef = useRef(false);
   const cancelledRoundsRef = useRef<Set<string>>(new Set());
+  const activeRoundRef = useRef<{ dialogId: number; roundId: string } | null>(null);
 
   const refreshDialogs = useCallback(() => {
     fetch(`${SIDECAR}/dialogs`)
@@ -224,10 +230,136 @@ function App() {
   }, [onboardingChecked, config, phase]);
 
   useEffect(() => {
-    if (phase === "main" && config) {
-      refreshDialogs();
+    if (phase === "main" && config) refreshDialogs();
+  }, [phase, config, refreshDialogs]);
+
+  useEffect(() => {
+    function handleExtractEvent(event: Record<string, unknown>) {
+      try {
+        const stage = event.stage as string;
+        const status = event.status as string;
+        const active = activeRoundRef.current;
+        if (!active) return;
+
+        const eventId = `${stage}-${status}-${Date.now()}`;
+        const tool = event.tool as string | undefined;
+        const toolLabel = event.toolLabel as string | undefined;
+        const thinking = event.thinking as string | undefined;
+        const data = event.data;
+        const usage = event.usage as { promptTokens: number; completionTokens: number } | undefined;
+
+        if (stage === "done" && status === "done" && data) {
+          const rawResult = data as Record<string, unknown>;
+          if (typeof rawResult.answer !== "string") return;
+          const result = data as ExtractResult;
+          const chatResult: ChatResult = {
+            answer: result.answer ?? "",
+            strategy: result.strategy ?? { kind: "fields" },
+            data: result.data ?? {},
+            table: result.table ?? [],
+            verification: result.verification ?? { answersGoal: false, issues: [] },
+            repaired: result.repaired ?? false,
+            manifest: result.manifest,
+            usage: result.usage,
+            dialogId: result.dialogId
+          };
+          updateRound(active.dialogId, active.roundId, {
+            result: chatResult,
+            loading: false,
+            usage: result.usage
+          });
+          updateConversation(active.dialogId, (state) => ({
+            ...state,
+            favicon: result.capture?.favicon ?? state.favicon,
+            sidebarData: resultToSidebarData(result)
+          }));
+          if (result.capture?.favicon) setChatFavicon(result.capture.favicon);
+          if (result.dialogId) { setActiveDialogId(result.dialogId); refreshDialogs(); }
+          activeRoundRef.current = null;
+          return;
+        }
+
+        if (stage === "error" || status === "error") {
+          const errMsg = (data as { error?: string })?.error ?? "extraction failed";
+          updateRound(active.dialogId, active.roundId, {
+            error: errMsg,
+            loading: false
+          });
+          activeRoundRef.current = null;
+          return;
+        }
+
+        if (status === "start" && thinking) {
+          const newEvent: AgentEvent = {
+            id: `${stage}-thinking-${Date.now()}`,
+            type: "thinking",
+            stage,
+            thinking,
+          };
+          updateRound(active.dialogId, active.roundId, (prev) => ({
+            events: [...(prev.events ?? []), newEvent]
+          }));
+        }
+
+        if (status === "start" && tool) {
+          const newEvent: AgentEvent = {
+            id: `${stage}-tool-${Date.now()}`,
+            type: "tool_call",
+            stage,
+            tool: { name: tool, label: toolLabel ?? tool, status: "running" },
+          };
+          updateRound(active.dialogId, active.roundId, (prev) => ({
+            events: [...(prev.events ?? []), newEvent]
+          }));
+        }
+
+        if (status === "done" && tool) {
+          updateRound(active.dialogId, active.roundId, (prev) => ({
+            events: (prev.events ?? []).map((ev) => {
+              if (ev.stage === stage && ev.type === "tool_call") {
+                return {
+                  ...ev,
+                  tool: ev.tool ? { ...ev.tool, status: "done" as const } : ev.tool,
+                  toolData: data,
+                  usage,
+                };
+              }
+              return ev;
+            })
+          }));
+        }
+      } catch (err) {
+        console.error("extract event handler error:", err);
+      }
     }
-  }, [phase, config]);
+
+    function handleCodeGenEvent(event: Record<string, unknown>) {
+      try {
+        const type = event.type as string;
+        if (type === "chunk") {
+          setCodegenChunks((prev) => [...prev, event.text as string]);
+        } else if (type === "done") {
+          setCodegenDone(true);
+        } else if (type === "error") {
+          setCodegenError(event.error as string);
+        }
+      } catch (err) {
+        console.error("codegen event handler error:", err);
+      }
+    }
+
+    if (typeof window !== "undefined" && (window as unknown as Record<string, unknown>).runtime) {
+      EventsOn("extract:event", handleExtractEvent);
+      EventsOn("codegen:event", handleCodeGenEvent);
+    }
+
+    return () => {
+      if (typeof window !== "undefined" && (window as unknown as Record<string, unknown>).runtime) {
+        EventsOff("extract:event");
+        EventsOff("codegen:event");
+      }
+    };
+  }, []);
 
   function handleSplashComplete() {
     splashDoneRef.current = true;
@@ -251,13 +383,7 @@ function App() {
       await fetch(`${SIDECAR}/settings`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          provider: cfg.provider,
-          model: cfg.model,
-          baseUrl: cfg.baseUrl,
-          use_heuristic: String(cfg.useHeuristic),
-          onboarding_complete: "true"
-        })
+        body: JSON.stringify({ provider: cfg.provider, model: cfg.model, baseUrl: cfg.baseUrl, use_heuristic: String(cfg.useHeuristic), onboarding_complete: "true" })
       });
     } catch {}
   }
@@ -277,9 +403,8 @@ function App() {
   }
 
   function handleUrlSubmit(url: string) {
-    const domain = extractDomain(url);
     setChatUrl(url);
-    setChatDomain(domain);
+    setChatDomain(extractDomain(url));
     setChatFavicon(faviconForUrl(url));
     setCenterState("chat");
     setRightCollapsed(false);
@@ -293,10 +418,14 @@ function App() {
     });
   }
 
-  function updateRound(dialogId: number, roundId: string, patch: Partial<ChatRound>) {
+  function updateRound(dialogId: number, roundId: string, patch: Partial<ChatRound> | ((prev: ChatRound) => Partial<ChatRound>)) {
     updateConversation(dialogId, (state) => ({
       ...state,
-      rounds: state.rounds.map((r) => r.id === roundId ? { ...r, ...patch } : r)
+      rounds: state.rounds.map((r) => {
+        if (r.id !== roundId) return r;
+        const patchObj = typeof patch === "function" ? patch(r) : patch;
+        return { ...r, ...patchObj };
+      })
     }));
   }
 
@@ -311,15 +440,7 @@ function App() {
     if (!url || !domain) return;
 
     const roundId = `round-${Date.now()}`;
-    const initialStages = STAGE_DEFS.map((s) => ({ ...s, status: "typing" as const }));
-    const newRound: ChatRound = {
-      id: roundId,
-      goal,
-      stages: initialStages,
-      result: null,
-      error: null,
-      loading: true
-    };
+    const newRound: ChatRound = { id: roundId, goal, events: [], result: null, error: null, loading: true };
 
     let dialogId = activeDialogId ?? 0;
     if (!dialogId) {
@@ -327,13 +448,7 @@ function App() {
         const response = await fetch(`${SIDECAR}/dialogs`, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            title: goal.slice(0, 60),
-            url,
-            domain,
-            faviconUrl: favicon,
-            goal
-          })
+          body: JSON.stringify({ title: goal.slice(0, 60), url, domain, faviconUrl: favicon, goal })
         });
         const data = await response.json();
         dialogId = Number(data.id);
@@ -348,110 +463,37 @@ function App() {
 
     setConversations((prev) => {
       const existing = prev[dialogId];
-      return {
-        ...prev,
-        [dialogId]: {
-          url,
-          domain,
-          favicon,
-          sidebarData: existing?.sidebarData ?? null,
-          rounds: [...(existing?.rounds ?? []), newRound]
-        }
-      };
+      return { ...prev, [dialogId]: { url, domain, favicon, sidebarData: existing?.sidebarData ?? null, rounds: [...(existing?.rounds ?? []), newRound] } };
     });
 
-    const api = window.go?.main?.App;
-    const apiPromise = api ? api.Extract({
-      url,
-      goal,
-      dialogId: dialogId > 0 ? dialogId : undefined,
-      provider: config.useHeuristic ? "heuristic" : config.provider,
-      baseUrl: config.baseUrl,
-      model: config.model,
-      apiKey: config.apiKey,
-      maxItems: 100,
-      mode: "auto"
-    }) : Promise.reject(new Error("Wails bridge is not available."));
-
-    for (let i = 0; i < STAGE_DEFS.length; i++) {
-      const stage = STAGE_DEFS[i];
-      await sleep(stage.text.length * 22 + 250);
-      if (cancelledRoundsRef.current.has(roundId)) {
-        await apiPromise.catch(() => undefined);
-        return;
-      }
-      updateRound(dialogId, roundId, {
-        stages: initialStages.map((s, idx) => idx <= i ? { ...s, status: "done" as const } : s)
-      });
-    }
+    activeRoundRef.current = { dialogId, roundId };
 
     try {
-      const response = await apiPromise;
-      if (cancelledRoundsRef.current.has(roundId)) return;
-
-      const chatResult: ChatResult = {
-        answer: response.answer,
-        strategy: response.strategy,
-        data: response.data,
-        table: response.table,
-        verification: response.verification,
-        repaired: response.repaired,
-        dialogId: response.dialogId
-      };
-
-      updateRound(dialogId, roundId, {
-        result: chatResult,
-        loading: false,
-        stages: STAGE_DEFS.map((s) => ({ ...s, status: "done" as const }))
+      const api = window.go?.main?.App;
+      if (!api) throw new Error("Wails bridge is not available.");
+      await api.Extract({
+        url, goal,
+        dialogId: dialogId > 0 ? dialogId : undefined,
+        provider: config.useHeuristic ? "heuristic" : config.provider,
+        baseUrl: config.baseUrl,
+        model: config.model,
+        apiKey: config.apiKey,
+        maxItems: 100,
+        mode: "auto"
       });
-
-      updateConversation(dialogId, (state) => ({
-        ...state,
-        favicon: response.capture?.favicon ?? state.favicon,
-        sidebarData: resultToSidebarData(response)
-      }));
-
-      if (response.dialogId && response.dialogId !== dialogId) {
-        setConversations((prev) => {
-          const current = prev[dialogId];
-          if (!current) return prev;
-          const next = { ...prev, [response.dialogId!]: current };
-          delete next[dialogId];
-          return next;
-        });
-        dialogId = response.dialogId;
-      }
-
-      if (response.capture?.favicon) {
-        setChatFavicon(response.capture.favicon);
-      }
-
-      if (response.dialogId) {
-        setActiveDialogId(response.dialogId);
-        refreshDialogs();
-      }
     } catch (err) {
       if (cancelledRoundsRef.current.has(roundId)) return;
-
-      updateRound(dialogId, roundId, {
-        error: err instanceof Error ? err.message : String(err),
-        loading: false,
-        stages: STAGE_DEFS.map((s) => ({ ...s, status: "done" as const }))
-      });
+      updateRound(dialogId, roundId, { error: err instanceof Error ? err.message : String(err), loading: false });
+      activeRoundRef.current = null;
     }
   }
 
   function handleCancelActiveRound() {
-    if (!activeDialogId) return;
-    const conversation = conversations[activeDialogId];
-    const round = [...(conversation?.rounds ?? [])].reverse().find((item) => item.loading);
-    if (!round) return;
-    cancelledRoundsRef.current.add(round.id);
-    updateRound(activeDialogId, round.id, {
-      loading: false,
-      error: "Отменено",
-      stages: round.stages.map((stage) => ({ ...stage, status: "done" as const }))
-    });
+    const active = activeRoundRef.current;
+    if (!active) return;
+    cancelledRoundsRef.current.add(active.roundId);
+    updateRound(active.dialogId, active.roundId, { loading: false, error: "Отменено" });
+    activeRoundRef.current = null;
   }
 
   function handleSelectDialog(id: number) {
@@ -468,26 +510,50 @@ function App() {
     fetch(`${SIDECAR}/dialogs/${id}`, { method: "DELETE" })
       .then(() => {
         setDialogs((prev) => prev.filter((d) => d.id !== id));
-        setConversations((prev) => {
-          const next = { ...prev };
-          delete next[id];
-          return next;
-        });
+        setConversations((prev) => { const next = { ...prev }; delete next[id]; return next; });
         if (activeDialogId === id) handleNewDialog();
       })
       .catch(() => {});
   }
 
+  function handleGenerateCode(manifest: Record<string, unknown>, _roundId: string) {
+    setCodegenManifest(manifest);
+    setCodegenChunks([]);
+    setCodegenDone(false);
+    setCodegenError(null);
+    setCodegenOpen(true);
+  }
+
+  async function handleCodegenStart(params: CodeGenParams) {
+    if (!config || !codegenManifest) return;
+    setCodegenChunks([]);
+    setCodegenDone(false);
+    setCodegenError(null);
+
+    try {
+      const api = window.go?.main?.App;
+      if (!api) throw new Error("Wails bridge is not available.");
+      await api.GenerateCode({
+        manifest: codegenManifest,
+        language: params.language,
+        includeDocs: params.includeDocs,
+        extraRequirements: params.extraRequirements,
+        provider: config.useHeuristic ? "heuristic" : config.provider,
+        baseUrl: config.baseUrl,
+        model: config.model,
+        apiKey: config.apiKey,
+        heuristic: config.useHeuristic
+      });
+    } catch (err) {
+      setCodegenError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
   const providerLabel = config
-    ? config.useHeuristic
-      ? "Heuristic"
-      : PROVIDERS.find((p) => p.id === config.provider)?.label ?? config.provider
-    : "";
+    ? config.useHeuristic ? "Heuristic" : PROVIDERS.find((p) => p.id === config.provider)?.label ?? config.provider : "";
   const modelName = config
-    ? config.useHeuristic
-      ? "Без API ключа"
-      : config.model || PROVIDERS.find((p) => p.id === config.provider)?.defaultModel || ""
-    : "";
+    ? config.useHeuristic ? "Без API ключа" : config.model || PROVIDERS.find((p) => p.id === config.provider)?.defaultModel || "" : "";
+
   const activeConversation = activeDialogId ? conversations[activeDialogId] : null;
   const currentUrl = activeConversation?.url ?? chatUrl;
   const currentDomain = activeConversation?.domain ?? chatDomain;
@@ -532,6 +598,7 @@ function App() {
                   anyLoading={currentLoading}
                   onGoalSubmit={handleGoalSubmit}
                   onCancel={handleCancelActiveRound}
+                  onGenerateCode={handleGenerateCode}
                 />
               )}
             </main>
@@ -548,28 +615,25 @@ function App() {
         ) : null}
       </div>
 
-      {phase === "splash" ? (
-        <LaunchSplash key="splash" onComplete={handleSplashComplete} />
-      ) : null}
-
-      {phase === "greeting" ? (
-        <Onboarding providers={PROVIDERS} onComplete={handleOnboardingComplete} />
-      ) : null}
+      {phase === "splash" ? <LaunchSplash key="splash" onComplete={handleSplashComplete} /> : null}
+      {phase === "greeting" ? <Onboarding providers={PROVIDERS} onComplete={handleOnboardingComplete} /> : null}
 
       {settingsOpen && config ? (
-        <SettingsModal
-          providers={PROVIDERS}
-          config={config}
-          onClose={() => setSettingsOpen(false)}
-          onSave={handleSettingsSave}
-        />
+        <SettingsModal providers={PROVIDERS} config={config} onClose={() => setSettingsOpen(false)} onSave={handleSettingsSave} />
       ) : null}
+
+      <CodeGenDialog
+        open={codegenOpen}
+        manifest={codegenManifest}
+        config={config}
+        onClose={() => setCodegenOpen(false)}
+        onGenerate={handleCodegenStart}
+        codeChunks={codegenChunks}
+        codeDone={codegenDone}
+        codeError={codegenError}
+      />
     </div>
   );
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 createRoot(document.getElementById("root")!).render(<App />);

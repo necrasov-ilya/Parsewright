@@ -1,16 +1,19 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
+
+	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 type App struct {
@@ -30,11 +33,27 @@ type ExtractRequest struct {
 	Mode     string `json:"mode"`
 }
 
+type CodeGenRequest struct {
+	Manifest          map[string]interface{} `json:"manifest"`
+	Language          string                 `json:"language"`
+	IncludeDocs       bool                   `json:"includeDocs"`
+	ExtraRequirements string                 `json:"extraRequirements"`
+	Provider          string                 `json:"provider"`
+	BaseURL           string                 `json:"baseUrl"`
+	Model             string                 `json:"model"`
+	APIKey            string                 `json:"apiKey"`
+	Heuristic         bool                   `json:"heuristic"`
+}
+
 type HealthResponse struct {
 	OK            bool   `json:"ok"`
 	Version       string `json:"version"`
 	PID           int    `json:"pid"`
 	WorkspaceRoot string `json:"workspaceRoot"`
+}
+
+type ResetResponse struct {
+	OK bool `json:"ok"`
 }
 
 func NewApp() *App {
@@ -69,10 +88,6 @@ func (a *App) killSidecar() {
 	time.Sleep(500 * time.Millisecond)
 }
 
-type ResetResponse struct {
-	OK bool `json:"ok"`
-}
-
 func (a *App) Reset() (ResetResponse, error) {
 	client := http.Client{Timeout: 2 * time.Second}
 	_, _ = client.Post("http://127.0.0.1:47831/reset", "application/json", bytes.NewReader([]byte("{}")))
@@ -92,20 +107,115 @@ func (a *App) Extract(request ExtractRequest) (map[string]interface{}, error) {
 	}
 
 	payload, _ := json.Marshal(request)
-	resp, err := http.Post("http://127.0.0.1:47831/extract", "application/json", bytes.NewReader(payload))
+	resp, err := http.Post("http://127.0.0.1:47831/extract/stream", "application/json", bytes.NewReader(payload))
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
-	var result map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
+	var finalResult map[string]interface{}
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := line[6:]
+		var event map[string]interface{}
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			continue
+		}
+
+		stage, _ := event["stage"].(string)
+		status, _ := event["status"].(string)
+
+		if stage == "done" && status == "done" {
+			if data, ok := event["data"].(map[string]interface{}); ok {
+				finalResult = data
+			}
+			wailsRuntime.EventsEmit(a.ctx, "extract:event", event)
+			break
+		}
+
+		if stage == "error" || status == "error" {
+			wailsRuntime.EventsEmit(a.ctx, "extract:event", event)
+			errMsg := "extraction failed"
+			if data, ok := event["data"].(map[string]interface{}); ok {
+				if e, ok := data["error"].(string); ok {
+					errMsg = e
+				}
+			}
+			return nil, errors.New(errMsg)
+		}
+
+		wailsRuntime.EventsEmit(a.ctx, "extract:event", event)
+	}
+
+	if finalResult == nil {
+		return nil, errors.New("stream ended without result")
+	}
+	return finalResult, nil
+}
+
+func (a *App) GenerateCode(request CodeGenRequest) (map[string]interface{}, error) {
+	if err := a.ensureSidecar(); err != nil {
 		return nil, err
 	}
-	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("%v", result["error"])
+
+	payload, _ := json.Marshal(request)
+	resp, err := http.Post("http://127.0.0.1:47831/codegen/stream", "application/json", bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
 	}
-	return result, nil
+	defer resp.Body.Close()
+
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 512*1024), 512*1024)
+	var code string
+	var usage map[string]interface{}
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := line[6:]
+		var event map[string]interface{}
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			continue
+		}
+
+		eventType, _ := event["type"].(string)
+
+		if eventType == "done" {
+			if c, ok := event["code"].(string); ok {
+				code = c
+			}
+			if u, ok := event["usage"].(map[string]interface{}); ok {
+				usage = u
+			}
+			wailsRuntime.EventsEmit(a.ctx, "codegen:event", event)
+			break
+		}
+
+		if eventType == "error" {
+			wailsRuntime.EventsEmit(a.ctx, "codegen:event", event)
+			errMsg := "code generation failed"
+			if e, ok := event["error"].(string); ok {
+				errMsg = e
+			}
+			return nil, errors.New(errMsg)
+		}
+
+		wailsRuntime.EventsEmit(a.ctx, "codegen:event", event)
+	}
+
+	return map[string]interface{}{
+		"code":  code,
+		"usage": usage,
+	}, nil
 }
 
 func (a *App) ensureSidecar() error {

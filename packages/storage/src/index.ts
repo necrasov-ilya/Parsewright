@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import { mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import path from "node:path";
+import crypto from "node:crypto";
 import type { ParsewrightManifest } from "@parsewright/manifest";
 
 export interface SavedProject {
@@ -93,7 +94,16 @@ const SCHEMA = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_runs_project ON runs(project_id)`,
   `CREATE INDEX IF NOT EXISTS idx_runs_started ON runs(started_at DESC)`,
-  `CREATE INDEX IF NOT EXISTS idx_dialogs_created ON dialogs(created_at DESC)`
+  `CREATE INDEX IF NOT EXISTS idx_dialogs_created ON dialogs(created_at DESC)`,
+  `CREATE TABLE IF NOT EXISTS manifest_cache (
+    cache_key     TEXT PRIMARY KEY,
+    url           TEXT NOT NULL,
+    goal          TEXT NOT NULL,
+    manifest_json TEXT NOT NULL,
+    created_at    TEXT NOT NULL,
+    last_used_at  TEXT NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_manifest_cache_url ON manifest_cache(url)`
 ].join(";");
 
 export class ParsewrightStorage {
@@ -290,8 +300,37 @@ export class ParsewrightStorage {
     this.db.prepare("DELETE FROM dialogs WHERE id = ?").run(id);
   }
 
+  getCachedManifest(url: string, goal: string): ParsewrightManifest | undefined {
+    const cacheKey = manifestCacheKey(url, goal);
+    const row = this.db.prepare("SELECT manifest_json FROM manifest_cache WHERE cache_key = ?").get(cacheKey) as { manifest_json: string } | undefined;
+    if (!row) return undefined;
+    try {
+      this.db.prepare("UPDATE manifest_cache SET last_used_at = ? WHERE cache_key = ?").run(new Date().toISOString(), cacheKey);
+      return JSON.parse(row.manifest_json) as ParsewrightManifest;
+    } catch {
+      return undefined;
+    }
+  }
+
+  setCachedManifest(url: string, goal: string, manifest: ParsewrightManifest): void {
+    const cacheKey = manifestCacheKey(url, goal);
+    const now = new Date().toISOString();
+    this.db.prepare(
+      `INSERT INTO manifest_cache (cache_key, url, goal, manifest_json, created_at, last_used_at)
+       VALUES (@cache_key, @url, @goal, @manifest_json, @created_at, @last_used_at)
+       ON CONFLICT(cache_key) DO UPDATE SET manifest_json = @manifest_json, last_used_at = @last_used_at`
+    ).run({
+      cache_key: cacheKey,
+      url,
+      goal,
+      manifest_json: JSON.stringify(manifest),
+      created_at: now,
+      last_used_at: now
+    });
+  }
+
   reset(): void {
-    this.db.exec("DELETE FROM runs; DELETE FROM projects; DELETE FROM settings; DELETE FROM dialogs;");
+    this.db.exec("DELETE FROM runs; DELETE FROM projects; DELETE FROM settings; DELETE FROM dialogs; DELETE FROM manifest_cache;");
     void rm(this.projectsDir, { recursive: true, force: true });
     void rm(this.snapshotsDir, { recursive: true, force: true });
   }
@@ -330,4 +369,8 @@ export async function saveProject(input: {
 export async function loadManifest(dir: string): Promise<ParsewrightManifest> {
   const text = await readFile(path.join(dir, "manifest.json"), "utf8");
   return JSON.parse(text);
+}
+
+export function manifestCacheKey(url: string, goal: string): string {
+  return crypto.createHash("sha256").update(`${url}::${goal}`).digest("hex").slice(0, 32);
 }

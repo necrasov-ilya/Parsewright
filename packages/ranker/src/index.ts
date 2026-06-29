@@ -31,7 +31,10 @@ const ALIASES: Record<string, string[]> = {
 export function rankCandidates(candidates: NormalizedCandidate[], goal: string, strategy: ExtractionStrategy): RankingResult {
   const objective = strategy.ranking?.objective ?? "none";
   const topK = strategy.ranking?.topK ?? 20;
-  const isPriceObjective = objective === "lowest_price";
+  const isPriceObjective = objective === "lowest_price" || objective === "highest_price";
+  const isScoreObjective = objective === "highest_score" || objective === "lowest_score";
+  const isDateObjective = objective === "newest" || objective === "oldest";
+  const isAscending = objective === "lowest_price" || objective === "lowest_score" || objective === "oldest";
   const rawQueryTerms = tokenize(goal);
   const queryTerms = isPriceObjective ? rawQueryTerms.filter((term) => !PRICE_TERMS.has(term)) : rawQueryTerms;
   const ranked = candidates
@@ -43,9 +46,9 @@ export function rankCandidates(candidates: NormalizedCandidate[], goal: string, 
     })
     .sort((a, b) => {
       if (isPriceObjective) {
-        const priceA = a.price ?? Number.POSITIVE_INFINITY;
-        const priceB = b.price ?? Number.POSITIVE_INFINITY;
-        if (Math.abs(priceA - priceB) > 0.0001) return priceA - priceB;
+        const priceA = a.price ?? (isAscending ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY);
+        const priceB = b.price ?? (isAscending ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY);
+        if (Math.abs(priceA - priceB) > 0.0001) return isAscending ? priceA - priceB : priceB - priceA;
       }
       return b.rankScore - a.rankScore;
     })
@@ -69,7 +72,8 @@ function scoreCandidate(candidate: NormalizedCandidate, queryTerms: string[], ob
   if (candidate.price !== undefined) {
     rankReasons.push(`price:${candidate.price}`);
     if (objective === "lowest_price") rankScore += Math.max(0, 50 - Math.log10(candidate.price + 1) * 10);
-  } else if (objective === "lowest_price") {
+    else if (objective === "highest_price") rankScore += Math.min(50, Math.log10(candidate.price + 1) * 10);
+  } else if (objective === "lowest_price" || objective === "highest_price") {
     rankScore -= 20;
     rankReasons.push("missing_price");
   }

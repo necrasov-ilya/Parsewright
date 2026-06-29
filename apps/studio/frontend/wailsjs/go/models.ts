@@ -1,5 +1,33 @@
 export namespace main {
 	
+	export class CodeGenRequest {
+	    manifest: Record<string, any>;
+	    language: string;
+	    includeDocs: boolean;
+	    extraRequirements: string;
+	    provider: string;
+	    baseUrl: string;
+	    model: string;
+	    apiKey: string;
+	    heuristic: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new CodeGenRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.manifest = source["manifest"];
+	        this.language = source["language"];
+	        this.includeDocs = source["includeDocs"];
+	        this.extraRequirements = source["extraRequirements"];
+	        this.provider = source["provider"];
+	        this.baseUrl = source["baseUrl"];
+	        this.model = source["model"];
+	        this.apiKey = source["apiKey"];
+	        this.heuristic = source["heuristic"];
+	    }
+	}
 	export class ExtractRequest {
 	    url: string;
 	    goal: string;

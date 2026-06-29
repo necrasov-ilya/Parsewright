@@ -1,12 +1,19 @@
 import { useState, useEffect, useRef } from "react";
 import type { ReactElement } from "react";
-import { X } from "lucide-react";
+import { X, Code2, Download, Copy, Check, Globe, Cpu, FileCode, Search, Wrench, CheckCircle2 } from "lucide-react";
 import parsewrightLogoMark from "../assets/parsewright-logo-mark.svg";
 
-export interface BotStage {
+export interface AgentEvent {
   id: string;
-  text: string;
-  status: "typing" | "done";
+  type: "thinking" | "tool_call" | "tool_result" | "answer" | "error" | "info";
+  stage?: string;
+  thinking?: string;
+  tool?: { name: string; label: string; status: "running" | "done" };
+  toolData?: unknown;
+  answer?: string;
+  error?: string;
+  usage?: { promptTokens: number; completionTokens: number };
+  result?: ChatResult;
 }
 
 export interface ChatResult {
@@ -16,16 +23,19 @@ export interface ChatResult {
   table: Array<Record<string, unknown>>;
   verification: { answersGoal: boolean; issues: string[] };
   repaired: boolean;
+  manifest?: Record<string, unknown>;
+  usage?: { promptTokens: number; completionTokens: number };
   dialogId?: number;
 }
 
 export interface ChatRound {
   id: string;
   goal: string;
-  stages: BotStage[];
+  events: AgentEvent[];
   result: ChatResult | null;
   error: string | null;
   loading: boolean;
+  usage?: { promptTokens: number; completionTokens: number };
 }
 
 interface ChatFeedProps {
@@ -36,10 +46,20 @@ interface ChatFeedProps {
   anyLoading: boolean;
   onGoalSubmit: (goal: string) => void;
   onCancel: () => void;
+  onGenerateCode: (manifest: Record<string, unknown>, roundId: string) => void;
 }
 
+const TOOL_ICONS: Record<string, ReactElement> = {
+  "Playwright": <Globe size={14} />,
+  "Page Reducer": <Search size={14} />,
+  "Model": <Cpu size={14} />,
+  "Runner": <Wrench size={14} />,
+  "Validator": <CheckCircle2 size={14} />,
+  "Ranker": <FileCode size={14} />
+};
+
 export function ChatFeed({
-  url, domain, faviconUrl, rounds, anyLoading, onGoalSubmit, onCancel
+  url, domain, faviconUrl, rounds, anyLoading, onGoalSubmit, onCancel, onGenerateCode
 }: ChatFeedProps): ReactElement {
   const [goalText, setGoalText] = useState("");
   const feedRef = useRef<HTMLDivElement>(null);
@@ -56,9 +76,7 @@ export function ChatFeed({
         {faviconUrl ? (
           <img src={faviconUrl} alt="" className="chat-feed__favicon" />
         ) : (
-          <div className="chat-feed__favicon-placeholder">
-            {domain.charAt(0).toUpperCase()}
-          </div>
+          <div className="chat-feed__favicon-placeholder">{domain.charAt(0).toUpperCase()}</div>
         )}
         <span className="chat-feed__domain">{domain}</span>
         <span className="chat-feed__url">{url}</span>
@@ -66,7 +84,7 @@ export function ChatFeed({
 
       <div className="chat-feed__messages" ref={feedRef}>
         {rounds.map((round, idx) => (
-          <RoundBlock key={round.id} round={round} showAvatar={idx === 0} />
+          <RoundBlock key={round.id} round={round} showAvatar={idx === 0} onGenerateCode={onGenerateCode} />
         ))}
       </div>
 
@@ -93,12 +111,7 @@ export function ChatFeed({
         ) : (
           <button
             className="chat-feed__send"
-            onClick={() => {
-              if (goalText.trim()) {
-                onGoalSubmit(goalText);
-                setGoalText("");
-              }
-            }}
+            onClick={() => { if (goalText.trim()) { onGoalSubmit(goalText); setGoalText(""); } }}
             disabled={!goalText.trim()}
             aria-label="Отправить"
           >
@@ -110,7 +123,7 @@ export function ChatFeed({
   );
 }
 
-function RoundBlock({ round, showAvatar }: { round: ChatRound; showAvatar: boolean }): ReactElement {
+function RoundBlock({ round, showAvatar, onGenerateCode }: { round: ChatRound; showAvatar: boolean; onGenerateCode: (manifest: Record<string, unknown>, roundId: string) => void }): ReactElement {
   return (
     <>
       <div className="chat-feed__user-message">
@@ -124,69 +137,102 @@ function RoundBlock({ round, showAvatar }: { round: ChatRound; showAvatar: boole
           <div className="chat-feed__bot-avatar-spacer" />
         )}
         <div className="chat-feed__bot-messages">
-          {round.stages.map((stage) => (
-            <StageMessage key={stage.id} stage={stage} />
+          {round.events.map((event) => (
+            <EventRenderer key={event.id} event={event} />
           ))}
-          {round.loading && round.stages.length === 0 ? (
-            <div className="chat-feed__typing">
-              <span /><span /><span />
-            </div>
+          {round.loading && round.events.length === 0 ? (
+            <div className="chat-feed__typing"><span /><span /><span /></div>
           ) : null}
         </div>
       </div>
 
       {round.error ? <div className="chat-feed__error">{round.error}</div> : null}
-      {round.result ? <ResultCard result={round.result} /> : null}
+
       {round.result ? (
-        <div className="chat-feed__bot">
-          <div className="chat-feed__bot-avatar-spacer" />
-          <div className="chat-feed__bot-messages">
-            <div className="chat-feed__stage chat-feed__stage--done">
-              <span className="chat-feed__stage-dot chat-feed__stage-dot--done" />
-              <p className="chat-feed__stage-text">Готово. Алгоритм сохранён — можно переиспользовать для этого сайта.</p>
-            </div>
-          </div>
-        </div>
+        <>
+          <ResultCard result={round.result} />
+          <ResultActions result={round.result} onGenerateCode={() => onGenerateCode(round.result?.manifest ?? {}, round.id)} />
+          {round.usage ? <TokenBadge usage={round.usage} /> : null}
+        </>
       ) : null}
     </>
   );
 }
 
-function StageMessage({ stage }: { stage: BotStage }): ReactElement {
-  const [displayedText, setDisplayedText] = useState("");
-  const [isPrinting, setIsPrinting] = useState(stage.status === "typing");
+function EventRenderer({ event }: { event: AgentEvent }): ReactElement {
+  if (event.type === "thinking" && event.thinking) {
+    return <ThinkingBubble text={event.thinking} done={event.tool?.status === "done"} />;
+  }
+
+  if (event.type === "tool_call" && event.tool) {
+    return <ToolCall name={event.tool.name} label={event.tool.label} status={event.tool.status} icon={TOOL_ICONS[event.tool.name] ?? <Wrench size={14} />} data={event.toolData} />;
+  }
+
+  if (event.type === "error") {
+    return <div className="chat-feed__error">{event.error}</div>;
+  }
+
+  return <></>;
+}
+
+function ThinkingBubble({ text, done }: { text: string; done: boolean }): ReactElement {
+  const [displayed, setDisplayed] = useState("");
+  const [printing, setPrinting] = useState(!done);
   const doneRef = useRef(false);
 
   useEffect(() => {
-    if (stage.status === "done") {
-      if (!doneRef.current) {
-        doneRef.current = true;
-        setDisplayedText(stage.text);
-        setIsPrinting(false);
-      }
+    if (done && !doneRef.current) {
+      doneRef.current = true;
+      setDisplayed(text);
+      setPrinting(false);
       return;
     }
-    setDisplayedText("");
-    setIsPrinting(true);
+    if (done) return;
+    setDisplayed("");
+    setPrinting(true);
     let i = 0;
     const interval = window.setInterval(() => {
       i++;
-      setDisplayedText(stage.text.slice(0, i));
-      if (i >= stage.text.length) {
-        window.clearInterval(interval);
-        setIsPrinting(false);
-      }
+      setDisplayed(text.slice(0, i));
+      if (i >= text.length) { window.clearInterval(interval); setPrinting(false); }
     }, 22);
     return () => window.clearInterval(interval);
-  }, [stage.status, stage.text]);
+  }, [text, done]);
 
   return (
-    <div className={`chat-feed__stage ${stage.status === "typing" ? "chat-feed__stage--active" : ""}`}>
-      <span className={`chat-feed__stage-dot ${stage.status === "done" ? "chat-feed__stage-dot--done" : ""}`} />
-      <p className="chat-feed__stage-text">
-        {displayedText}
-        {isPrinting ? <span className="chat-feed__cursor">▎</span> : null}
+    <div className="chat-feed__thinking">
+      <p className="chat-feed__thinking-text">
+        {displayed}
+        {printing ? <span className="chat-feed__cursor">▎</span> : null}
       </p>
+    </div>
+  );
+}
+
+function ToolCall({ name, label, status, icon, data }: {
+  name: string;
+  label: string;
+  status: "running" | "done";
+  icon: ReactElement;
+  data?: unknown;
+}): ReactElement {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div className={`tool-call ${status === "done" ? "tool-call--done" : ""}`} onClick={() => data && setExpanded(!expanded)}>
+      <div className="tool-call__header">
+        <span className="tool-call__icon">{icon}</span>
+        <span className="tool-call__name">{name}</span>
+        <span className="tool-call__label">{label}</span>
+        <span className={`tool-call__status ${status === "done" ? "tool-call__status--done" : "tool-call__status--running"}`}>
+          {status === "done" ? <CheckCircle2 size={12} /> : <span className="tool-call__spinner" />}
+        </span>
+      </div>
+      {expanded && data ? (
+        <div className="tool-call__details">
+          <pre>{JSON.stringify(data, null, 2)}</pre>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -196,21 +242,50 @@ function ResultCard({ result }: { result: ChatResult }): ReactElement {
   return (
     <div className="result-card">
       {!result.verification.answersGoal ? (
-        <p className="result-card__warning">
-          {result.verification.issues.join(" ") || "Данные могут не полностью отвечать на запрос."}
-        </p>
+        <p className="result-card__warning">{result.verification.issues.join(" ") || "Данные могут не полностью отвечать на запрос."}</p>
       ) : null}
-      {result.repaired ? (
-        <p className="result-card__repaired">Сайт изменился — алгоритм обновлён.</p>
-      ) : null}
-
+      {result.repaired ? <p className="result-card__repaired">Сайт изменился — алгоритм обновлён.</p> : null}
       <div className="result-card__answer">
         <p className="result-card__answer-text">{result.answer}</p>
       </div>
-
       {kind === "fields" ? <FieldsTable data={result.data} /> : null}
       {kind === "collection" && result.table.length > 0 ? <CollectionTable table={result.table} /> : null}
       {kind === "summary" ? <SummaryView data={result.data} /> : null}
+    </div>
+  );
+}
+
+function ResultActions({ result, onGenerateCode }: { result: ChatResult; onGenerateCode: () => void }): ReactElement {
+  return (
+    <div className="result-actions">
+      <button className="result-action" onClick={onGenerateCode}>
+        <Code2 size={15} />
+        <span>Сформировать код</span>
+      </button>
+      <button className="result-action" onClick={() => {
+        const json = JSON.stringify(result.manifest ?? {}, null, 2);
+        const blob = new Blob([json], { type: "application/json" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = "parsewright-manifest.json";
+        a.click();
+        URL.revokeObjectURL(a.href);
+      }}>
+        <Download size={15} />
+        <span>Экспортировать алгоритм</span>
+      </button>
+    </div>
+  );
+}
+
+function TokenBadge({ usage }: { usage: { promptTokens: number; completionTokens: number } }): ReactElement {
+  return (
+    <div className="token-badge">
+      <span className="token-badge__item">↑ {usage.promptTokens.toLocaleString()}</span>
+      <span className="token-badge__sep">·</span>
+      <span className="token-badge__item">↓ {usage.completionTokens.toLocaleString()}</span>
+      <span className="token-badge__sep">·</span>
+      <span className="token-badge__total">{(usage.promptTokens + usage.completionTokens).toLocaleString()} токенов</span>
     </div>
   );
 }
@@ -220,11 +295,8 @@ function FieldsTable({ data }: { data: Record<string, unknown> }): ReactElement 
   if (entries.length === 0) return <p className="result-card__empty">Не удалось извлечь поля.</p>;
   return (
     <div className="result-card__table-wrap">
-      <table>
-        <thead><tr><th>Поле</th><th>Значение</th></tr></thead>
-        <tbody>
-          {entries.map(([k, v], i) => <tr key={i}><td>{k}</td><td>{Array.isArray(v) ? `${v.length} items` : String(v)}</td></tr>)}
-        </tbody>
+      <table><thead><tr><th>Поле</th><th>Значение</th></tr></thead>
+        <tbody>{entries.map(([k, v], i) => <tr key={i}><td>{k}</td><td>{Array.isArray(v) ? `${v.length} items` : String(v)}</td></tr>)}</tbody>
       </table>
     </div>
   );
@@ -235,17 +307,10 @@ function CollectionTable({ table }: { table: Array<Record<string, unknown>> }): 
   const columns = Object.keys(table[0]).filter((k) => k !== "raw");
   return (
     <div className="result-card__table-wrap">
-      <table>
-        <thead><tr>{columns.map((c) => <th key={c}>{c}</th>)}</tr></thead>
-        <tbody>
-          {table.slice(0, 50).map((row, i) => (
-            <tr key={i}>
-              {columns.map((c) => (
-                <td key={c}>{c === "url" && typeof row[c] === "string" ? <a href={String(row[c])}>{String(row[c])}</a> : formatCell(row[c])}</td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
+      <table><thead><tr>{columns.map((c) => <th key={c}>{c}</th>)}</tr></thead>
+        <tbody>{table.slice(0, 50).map((row, i) => (
+          <tr key={i}>{columns.map((c) => <td key={c}>{c === "url" && typeof row[c] === "string" ? <a href={String(row[c])}>{String(row[c])}</a> : formatCell(row[c])}</td>)}</tr>
+        ))}</tbody>
       </table>
     </div>
   );
@@ -256,11 +321,8 @@ function SummaryView({ data }: { data: Record<string, unknown> }): ReactElement 
   if (entries.length === 0) return null;
   return (
     <div className="result-card__table-wrap">
-      <table>
-        <thead><tr><th>Ключ</th><th>Значение</th></tr></thead>
-        <tbody>
-          {entries.map(([k, v], i) => <tr key={i}><td>{k}</td><td>{Array.isArray(v) ? `${v.length} items` : String(v)}</td></tr>)}
-        </tbody>
+      <table><thead><tr><th>Ключ</th><th>Значение</th></tr></thead>
+        <tbody>{entries.map(([k, v], i) => <tr key={i}><td>{k}</td><td>{Array.isArray(v) ? `${v.length} items` : String(v)}</td></tr>)}</tbody>
       </table>
     </div>
   );

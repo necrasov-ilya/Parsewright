@@ -9,7 +9,7 @@ export type Transform = z.infer<typeof TransformSchema>;
 export const StrategyKindSchema = z.enum(["fields", "collection", "summary"]);
 export type StrategyKind = z.infer<typeof StrategyKindSchema>;
 
-export const RankingObjectiveSchema = z.enum(["lowest_price", "highest_score", "relevance", "none"]);
+export const RankingObjectiveSchema = z.enum(["lowest_price", "highest_price", "highest_score", "lowest_score", "relevance", "newest", "oldest", "none"]);
 export type RankingObjective = z.infer<typeof RankingObjectiveSchema>;
 
 export const StrategySchema = z.object({
@@ -66,7 +66,7 @@ export const ParsewrightManifestSchema = z.object({
   }),
   strategy: StrategySchema.optional(),
   schema: z.record(FieldSchema),
-  fields: z.record(ExtractionRuleSchema),
+  fields: z.record(ExtractionRuleSchema).default({}),
   collections: z.record(CollectionSchema).default({}),
   license: z.string().default("MIT"),
   createdAt: z.string().datetime().optional(),

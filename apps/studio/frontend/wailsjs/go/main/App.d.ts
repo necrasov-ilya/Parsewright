@@ -4,4 +4,6 @@ import {main} from '../models';
 
 export function Extract(arg1:main.ExtractRequest):Promise<Record<string, any>>;
 
+export function GenerateCode(arg1:main.CodeGenRequest):Promise<Record<string, any>>;
+
 export function Reset():Promise<main.ResetResponse>;

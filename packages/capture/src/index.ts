@@ -28,9 +28,9 @@ export interface CapturePageInput {
 
 export async function capturePage(input: CapturePageInput): Promise<PageCapture> {
   const wait: WaitStrategy = {
-    kind: "selector_or_timeout",
-    timeoutMs: 10000,
-    settleMs: 500,
+    kind: "networkidle",
+    timeoutMs: 15000,
+    settleMs: 1000,
     ...input.wait
   };
 
@@ -54,7 +54,7 @@ export async function capturePage(input: CapturePageInput): Promise<PageCapture>
       }
     });
     const response = await page.goto(input.url, {
-      waitUntil: wait.kind === "domcontentloaded" ? "domcontentloaded" : "load",
+      waitUntil: "load",
       timeout: wait.timeoutMs
     });
 
@@ -62,9 +62,7 @@ export async function capturePage(input: CapturePageInput): Promise<PageCapture>
       await page.locator(wait.selector).first().waitFor({ timeout: wait.timeoutMs }).catch(() => undefined);
     }
 
-    if (wait.kind === "networkidle") {
-      await page.waitForLoadState("networkidle", { timeout: wait.timeoutMs }).catch(() => undefined);
-    }
+    await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => undefined);
 
     if (wait.settleMs > 0) await page.waitForTimeout(wait.settleMs);
 
