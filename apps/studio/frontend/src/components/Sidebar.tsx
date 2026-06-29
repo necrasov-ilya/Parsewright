@@ -12,6 +12,7 @@ export interface DialogInfo {
   accent_color: string | null;
   goal: string;
   answer: string | null;
+  result_json: string | null;
   created_at: string;
 }
 

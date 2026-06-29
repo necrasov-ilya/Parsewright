@@ -46,6 +46,7 @@ export interface DialogRecord {
   accent_color: string | null;
   goal: string;
   answer: string | null;
+  result_json: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -86,6 +87,7 @@ const SCHEMA = [
     accent_color TEXT,
     goal         TEXT NOT NULL,
     answer       TEXT,
+    result_json  TEXT,
     created_at   TEXT NOT NULL,
     updated_at   TEXT NOT NULL
   )`,
@@ -104,8 +106,16 @@ export class ParsewrightStorage {
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("foreign_keys = ON");
     this.db.exec(SCHEMA);
+    this.migrate();
     this.projectsDir = path.join(dataDir, "projects");
     this.snapshotsDir = path.join(dataDir, "snapshots");
+  }
+
+  private migrate(): void {
+    const columns = this.db.prepare("PRAGMA table_info(dialogs)").all() as Array<{ name: string }>;
+    if (!columns.some((column) => column.name === "result_json")) {
+      this.db.exec("ALTER TABLE dialogs ADD COLUMN result_json TEXT");
+    }
   }
 
   saveProject(input: {
@@ -221,11 +231,12 @@ export class ParsewrightStorage {
     accentColor?: string;
     goal: string;
     answer?: string;
+    resultJson?: unknown;
   }): number {
     const now = new Date().toISOString();
     const result = this.db.prepare(
-      `INSERT INTO dialogs (title, url, domain, favicon_url, accent_color, goal, answer, created_at, updated_at)
-       VALUES (@title, @url, @domain, @favicon_url, @accent_color, @goal, @answer, @created_at, @updated_at)`
+      `INSERT INTO dialogs (title, url, domain, favicon_url, accent_color, goal, answer, result_json, created_at, updated_at)
+       VALUES (@title, @url, @domain, @favicon_url, @accent_color, @goal, @answer, @result_json, @created_at, @updated_at)`
     ).run({
       title: input.title,
       url: input.url,
@@ -234,6 +245,7 @@ export class ParsewrightStorage {
       accent_color: input.accentColor ?? null,
       goal: input.goal,
       answer: input.answer ?? null,
+      result_json: input.resultJson ? JSON.stringify(input.resultJson) : null,
       created_at: now,
       updated_at: now
     });
@@ -242,14 +254,24 @@ export class ParsewrightStorage {
 
   updateDialog(id: number, input: Partial<{
     title: string;
+    url: string;
+    domain: string;
+    faviconUrl: string;
     accentColor: string;
+    goal: string;
     answer: string;
+    resultJson: unknown;
   }>): void {
     const sets: string[] = [];
     const params: Record<string, unknown> = { id };
     if (input.title !== undefined) { sets.push("title = @title"); params.title = input.title; }
+    if (input.url !== undefined) { sets.push("url = @url"); params.url = input.url; }
+    if (input.domain !== undefined) { sets.push("domain = @domain"); params.domain = input.domain; }
+    if (input.faviconUrl !== undefined) { sets.push("favicon_url = @favicon_url"); params.favicon_url = input.faviconUrl; }
     if (input.accentColor !== undefined) { sets.push("accent_color = @accent_color"); params.accent_color = input.accentColor; }
+    if (input.goal !== undefined) { sets.push("goal = @goal"); params.goal = input.goal; }
     if (input.answer !== undefined) { sets.push("answer = @answer"); params.answer = input.answer; }
+    if (input.resultJson !== undefined) { sets.push("result_json = @result_json"); params.result_json = JSON.stringify(input.resultJson); }
     if (sets.length === 0) return;
     sets.push("updated_at = @updated_at");
     params.updated_at = new Date().toISOString();

@@ -26,6 +26,7 @@ declare global {
 interface ExtractInput {
   url: string;
   goal: string;
+  dialogId?: number;
   provider: string;
   baseUrl: string;
   model: string;
@@ -78,6 +79,14 @@ const PROVIDERS: ProviderInfo[] = [
 type AppPhase = "splash" | "greeting" | "main";
 type CenterState = "url-input" | "chat";
 
+interface ConversationState {
+  url: string;
+  domain: string;
+  favicon: string | null;
+  rounds: ChatRound[];
+  sidebarData: SidebarData | null;
+}
+
 const STAGE_DEFS: Array<{ id: string; text: string }> = [
   { id: "capture", text: "Позвольте мне открыть страницу…" },
   { id: "page_reduction", text: "Изучаю структуру страницы…" },
@@ -102,6 +111,57 @@ function faviconForUrl(url: string): string {
   return `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
 }
 
+function resultToSidebarData(response: Pick<ExtractResult, "capture" | "manifest" | "strategy" | "validation" | "verification" | "repaired">): SidebarData {
+  return {
+    capture: response.capture,
+    manifest: response.manifest,
+    strategy: response.strategy,
+    validation: response.validation,
+    verification: response.verification,
+    repaired: response.repaired
+  };
+}
+
+function conversationFromDialog(dialog: DialogInfo): ConversationState {
+  const parsed = parseDialogResult(dialog);
+  const result = parsed ? resultToChatResult(parsed, dialog.id) : null;
+  return {
+    url: dialog.url,
+    domain: dialog.domain,
+    favicon: dialog.favicon_url ?? faviconForUrl(dialog.url),
+    sidebarData: parsed ? resultToSidebarData(parsed) : null,
+    rounds: [{
+      id: `dialog-${dialog.id}`,
+      goal: dialog.goal,
+      stages: [],
+      result,
+      error: null,
+      loading: false
+    }]
+  };
+}
+
+function parseDialogResult(dialog: DialogInfo): ExtractResult | null {
+  if (!dialog.result_json) return null;
+  try {
+    return JSON.parse(dialog.result_json) as ExtractResult;
+  } catch {
+    return null;
+  }
+}
+
+function resultToChatResult(result: ExtractResult, dialogId: number): ChatResult {
+  return {
+    answer: result.answer,
+    strategy: result.strategy,
+    data: result.data,
+    table: result.table,
+    verification: result.verification,
+    repaired: result.repaired,
+    dialogId
+  };
+}
+
 function App() {
   const [phase, setPhase] = useState<AppPhase>("splash");
   const [shellVisible, setShellVisible] = useState(false);
@@ -112,9 +172,7 @@ function App() {
   const [chatUrl, setChatUrl] = useState("");
   const [chatDomain, setChatDomain] = useState("");
   const [chatFavicon, setChatFavicon] = useState<string | null>(null);
-  const [rounds, setRounds] = useState<ChatRound[]>([]);
-  const [anyLoading, setAnyLoading] = useState(false);
-  const [sidebarData, setSidebarData] = useState<SidebarData | null>(null);
+  const [conversations, setConversations] = useState<Record<number, ConversationState>>({});
 
   const [dialogs, setDialogs] = useState<DialogInfo[]>([]);
   const [activeDialogId, setActiveDialogId] = useState<number | null>(null);
@@ -124,6 +182,7 @@ function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   const splashDoneRef = useRef(false);
+  const cancelledRoundsRef = useRef<Set<string>>(new Set());
 
   const refreshDialogs = useCallback(() => {
     fetch(`${SIDECAR}/dialogs`)
@@ -213,8 +272,6 @@ function App() {
     setChatUrl("");
     setChatDomain("");
     setChatFavicon(null);
-    setRounds([]);
-    setSidebarData(null);
     setActiveDialogId(null);
     setRightCollapsed(true);
   }
@@ -224,37 +281,90 @@ function App() {
     setChatUrl(url);
     setChatDomain(domain);
     setChatFavicon(faviconForUrl(url));
-    setRounds([]);
-    setSidebarData(null);
     setCenterState("chat");
     setRightCollapsed(false);
   }
 
-  function updateRound(roundId: string, patch: Partial<ChatRound>) {
-    setRounds((prev) => prev.map((r) => r.id === roundId ? { ...r, ...patch } : r));
+  function updateConversation(dialogId: number, updater: (state: ConversationState) => ConversationState) {
+    setConversations((prev) => {
+      const current = prev[dialogId];
+      if (!current) return prev;
+      return { ...prev, [dialogId]: updater(current) };
+    });
+  }
+
+  function updateRound(dialogId: number, roundId: string, patch: Partial<ChatRound>) {
+    updateConversation(dialogId, (state) => ({
+      ...state,
+      rounds: state.rounds.map((r) => r.id === roundId ? { ...r, ...patch } : r)
+    }));
   }
 
   async function handleGoalSubmit(goal: string) {
-    if (!config || anyLoading) return;
+    if (!config) return;
+    const currentConversation = activeDialogId ? conversations[activeDialogId] : null;
+    if (currentConversation?.rounds.some((round) => round.loading)) return;
+
+    const url = currentConversation?.url ?? chatUrl;
+    const domain = currentConversation?.domain ?? chatDomain;
+    const favicon = currentConversation?.favicon ?? chatFavicon ?? faviconForUrl(url);
+    if (!url || !domain) return;
 
     const roundId = `round-${Date.now()}`;
-
     const initialStages = STAGE_DEFS.map((s) => ({ ...s, status: "typing" as const }));
-
-    setRounds((prev) => [...prev, {
+    const newRound: ChatRound = {
       id: roundId,
       goal,
       stages: initialStages,
       result: null,
       error: null,
       loading: true
-    }]);
-    setAnyLoading(true);
+    };
+
+    let dialogId = activeDialogId ?? 0;
+    if (!dialogId) {
+      try {
+        const response = await fetch(`${SIDECAR}/dialogs`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            title: goal.slice(0, 60),
+            url,
+            domain,
+            faviconUrl: favicon,
+            goal
+          })
+        });
+        const data = await response.json();
+        dialogId = Number(data.id);
+        if (!dialogId) throw new Error("Dialog was not created.");
+        setActiveDialogId(dialogId);
+        refreshDialogs();
+      } catch {
+        dialogId = Date.now() * -1;
+        setActiveDialogId(dialogId);
+      }
+    }
+
+    setConversations((prev) => {
+      const existing = prev[dialogId];
+      return {
+        ...prev,
+        [dialogId]: {
+          url,
+          domain,
+          favicon,
+          sidebarData: existing?.sidebarData ?? null,
+          rounds: [...(existing?.rounds ?? []), newRound]
+        }
+      };
+    });
 
     const api = window.go?.main?.App;
     const apiPromise = api ? api.Extract({
-      url: chatUrl,
+      url,
       goal,
+      dialogId: dialogId > 0 ? dialogId : undefined,
       provider: config.useHeuristic ? "heuristic" : config.provider,
       baseUrl: config.baseUrl,
       model: config.model,
@@ -266,15 +376,18 @@ function App() {
     for (let i = 0; i < STAGE_DEFS.length; i++) {
       const stage = STAGE_DEFS[i];
       await sleep(stage.text.length * 22 + 250);
-      setRounds((prev) => prev.map((r) =>
-        r.id === roundId
-          ? { ...r, stages: r.stages.map((s, idx) => idx <= i ? { ...s, status: "done" as const } : s) }
-          : r
-      ));
+      if (cancelledRoundsRef.current.has(roundId)) {
+        await apiPromise.catch(() => undefined);
+        return;
+      }
+      updateRound(dialogId, roundId, {
+        stages: initialStages.map((s, idx) => idx <= i ? { ...s, status: "done" as const } : s)
+      });
     }
 
     try {
       const response = await apiPromise;
+      if (cancelledRoundsRef.current.has(roundId)) return;
 
       const chatResult: ChatResult = {
         answer: response.answer,
@@ -286,20 +399,28 @@ function App() {
         dialogId: response.dialogId
       };
 
-      updateRound(roundId, {
+      updateRound(dialogId, roundId, {
         result: chatResult,
         loading: false,
         stages: STAGE_DEFS.map((s) => ({ ...s, status: "done" as const }))
       });
 
-      setSidebarData({
-        capture: response.capture,
-        manifest: response.manifest,
-        strategy: response.strategy,
-        validation: response.validation,
-        verification: response.verification,
-        repaired: response.repaired
-      });
+      updateConversation(dialogId, (state) => ({
+        ...state,
+        favicon: response.capture?.favicon ?? state.favicon,
+        sidebarData: resultToSidebarData(response)
+      }));
+
+      if (response.dialogId && response.dialogId !== dialogId) {
+        setConversations((prev) => {
+          const current = prev[dialogId];
+          if (!current) return prev;
+          const next = { ...prev, [response.dialogId!]: current };
+          delete next[dialogId];
+          return next;
+        });
+        dialogId = response.dialogId;
+      }
 
       if (response.capture?.favicon) {
         setChatFavicon(response.capture.favicon);
@@ -310,62 +431,34 @@ function App() {
         refreshDialogs();
       }
     } catch (err) {
-      try {
-        await fetch(`${SIDECAR}/dialogs`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            title: goal.slice(0, 60),
-            url: chatUrl,
-            domain: chatDomain,
-            faviconUrl: chatFavicon ?? faviconForUrl(chatUrl),
-            goal
-          })
-        });
-        refreshDialogs();
-      } catch {}
+      if (cancelledRoundsRef.current.has(roundId)) return;
 
-      updateRound(roundId, {
+      updateRound(dialogId, roundId, {
         error: err instanceof Error ? err.message : String(err),
         loading: false,
         stages: STAGE_DEFS.map((s) => ({ ...s, status: "done" as const }))
       });
-    } finally {
-      setAnyLoading(false);
     }
+  }
+
+  function handleCancelActiveRound() {
+    if (!activeDialogId) return;
+    const conversation = conversations[activeDialogId];
+    const round = [...(conversation?.rounds ?? [])].reverse().find((item) => item.loading);
+    if (!round) return;
+    cancelledRoundsRef.current.add(round.id);
+    updateRound(activeDialogId, round.id, {
+      loading: false,
+      error: "Отменено",
+      stages: round.stages.map((stage) => ({ ...stage, status: "done" as const }))
+    });
   }
 
   function handleSelectDialog(id: number) {
     setActiveDialogId(id);
     const dialog = dialogs.find((d) => d.id === id);
     if (dialog) {
-      setChatUrl(dialog.url);
-      setChatDomain(dialog.domain);
-      setChatFavicon(dialog.favicon_url);
-      setSidebarData(null);
-      setRounds(dialog.answer ? [{
-        id: `dialog-${dialog.id}`,
-        goal: dialog.goal,
-        stages: [],
-        result: {
-          answer: dialog.answer,
-          strategy: { kind: "fields" },
-          data: {},
-          table: [],
-          verification: { answersGoal: true, issues: [] },
-          repaired: false,
-          dialogId: dialog.id
-        },
-        error: null,
-        loading: false
-      }] : [{
-        id: `dialog-${dialog.id}`,
-        goal: dialog.goal,
-        stages: [],
-        result: null,
-        error: null,
-        loading: false
-      }]);
+      setConversations((prev) => prev[id] ? prev : { ...prev, [id]: conversationFromDialog(dialog) });
       setCenterState("chat");
       setRightCollapsed(false);
     }
@@ -375,6 +468,11 @@ function App() {
     fetch(`${SIDECAR}/dialogs/${id}`, { method: "DELETE" })
       .then(() => {
         setDialogs((prev) => prev.filter((d) => d.id !== id));
+        setConversations((prev) => {
+          const next = { ...prev };
+          delete next[id];
+          return next;
+        });
         if (activeDialogId === id) handleNewDialog();
       })
       .catch(() => {});
@@ -390,6 +488,13 @@ function App() {
       ? "Без API ключа"
       : config.model || PROVIDERS.find((p) => p.id === config.provider)?.defaultModel || ""
     : "";
+  const activeConversation = activeDialogId ? conversations[activeDialogId] : null;
+  const currentUrl = activeConversation?.url ?? chatUrl;
+  const currentDomain = activeConversation?.domain ?? chatDomain;
+  const currentFavicon = activeConversation?.favicon ?? chatFavicon;
+  const currentRounds = activeConversation?.rounds ?? [];
+  const currentLoading = currentRounds.some((round) => round.loading);
+  const currentSidebarData = activeConversation?.sidebarData ?? null;
 
   return (
     <div className="app-root">
@@ -420,12 +525,13 @@ function App() {
                 <UrlInput onSubmit={handleUrlSubmit} />
               ) : (
                 <ChatFeed
-                  url={chatUrl}
-                  domain={chatDomain}
-                  faviconUrl={chatFavicon}
-                  rounds={rounds}
-                  anyLoading={anyLoading}
+                  url={currentUrl}
+                  domain={currentDomain}
+                  faviconUrl={currentFavicon}
+                  rounds={currentRounds}
+                  anyLoading={currentLoading}
                   onGoalSubmit={handleGoalSubmit}
+                  onCancel={handleCancelActiveRound}
                 />
               )}
             </main>
@@ -437,7 +543,7 @@ function App() {
             >
               {rightCollapsed ? <PanelRightOpen size={16} /> : <PanelRightClose size={16} />}
             </button>
-            <RightSidebar collapsed={rightCollapsed} data={sidebarData} />
+            <RightSidebar collapsed={rightCollapsed} data={currentSidebarData} />
           </div>
         ) : null}
       </div>

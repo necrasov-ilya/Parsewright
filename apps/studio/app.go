@@ -21,6 +21,7 @@ type App struct {
 type ExtractRequest struct {
 	URL      string `json:"url"`
 	Goal     string `json:"goal"`
+	DialogID int    `json:"dialogId,omitempty"`
 	Provider string `json:"provider"`
 	BaseURL  string `json:"baseUrl"`
 	Model    string `json:"model"`

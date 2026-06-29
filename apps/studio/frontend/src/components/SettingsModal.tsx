@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ReactElement } from "react";
-import { KeyRound, Search, Settings2, SlidersHorizontal, X } from "lucide-react";
+import { Eye, EyeOff, KeyRound, Search, Settings2, SlidersHorizontal, X } from "lucide-react";
 import type { OnboardingConfig, ProviderInfo } from "./Onboarding";
 
 interface SettingsModalProps {
@@ -19,6 +19,7 @@ export function SettingsModal({ providers, config, onClose, onSave }: SettingsMo
   const [apiKey, setApiKey] = useState(config.apiKey);
   const [useHeuristic, setUseHeuristic] = useState(config.useHeuristic);
   const [providerQuery, setProviderQuery] = useState("");
+  const [apiKeyVisible, setApiKeyVisible] = useState(false);
 
   const selectedProvider = useMemo(
     () => providers.find((item) => item.id === provider) ?? providers[0],
@@ -172,13 +173,24 @@ export function SettingsModal({ providers, config, onClose, onSave }: SettingsMo
                   <KeyRound size={14} strokeWidth={2.1} aria-hidden="true" />
                   API ключ
                 </span>
-                <input
-                  type="password"
-                  value={apiKey}
-                  onChange={(event) => setApiKey(event.target.value)}
-                  placeholder={selectedProvider?.docsUrl ? `Ключ ${selectedProvider.label}` : "Введите API ключ"}
-                  disabled={useHeuristic}
-                />
+                <div className="settings-field__secret">
+                  <input
+                    type={apiKeyVisible ? "text" : "password"}
+                    value={apiKey}
+                    onChange={(event) => setApiKey(event.target.value)}
+                    placeholder={selectedProvider?.docsUrl ? `Ключ ${selectedProvider.label}` : "Введите API ключ"}
+                    disabled={useHeuristic}
+                  />
+                  <button
+                    type="button"
+                    className="settings-field__secret-toggle"
+                    onClick={() => setApiKeyVisible((value) => !value)}
+                    disabled={useHeuristic}
+                    aria-label={apiKeyVisible ? "Скрыть API ключ" : "Показать API ключ"}
+                  >
+                    {apiKeyVisible ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
               </label>
             </div>
           </section>

@@ -77,8 +77,13 @@ const server = http.createServer(async (req, res) => {
       const body = await readJson(req);
       storage.updateDialog(id, {
         title: body.title,
+        url: body.url,
+        domain: body.domain,
+        faviconUrl: body.faviconUrl,
         accentColor: body.accentColor,
-        answer: body.answer
+        goal: body.goal,
+        answer: body.answer,
+        resultJson: body.resultJson
       });
       return json(res, 200, { ok: true });
     }
@@ -163,14 +168,43 @@ const server = http.createServer(async (req, res) => {
           { capture: { capture: ({ url }) => capturePage({ url }) }, model }
         );
 
-        const dialogId = storage.createDialog({
-          title: result.verification.title || body.goal.slice(0, 60),
-          url: body.url,
-          domain: extractDomain(body.url),
-          faviconUrl: result.capture.favicon,
-          goal: body.goal,
-          answer: result.answer
-        });
+        const resultJson = {
+          answer: result.answer,
+          data: result.data,
+          strategy: result.strategy,
+          table: result.table,
+          verification: result.verification,
+          validation: result.validation,
+          capture: result.capture,
+          manifest: result.manifest,
+          repaired: result.repaired
+        };
+
+        const requestedDialogId = Number(body.dialogId);
+        const title = result.verification.title || body.goal.slice(0, 60);
+        const dialogId = Number.isFinite(requestedDialogId) && requestedDialogId > 0
+          ? requestedDialogId
+          : storage.createDialog({
+            title,
+            url: body.url,
+            domain: extractDomain(body.url),
+            faviconUrl: result.capture.favicon,
+            goal: body.goal,
+            answer: result.answer,
+            resultJson
+          });
+
+        if (dialogId === requestedDialogId) {
+          storage.updateDialog(dialogId, {
+            title,
+            url: body.url,
+            domain: extractDomain(body.url),
+            faviconUrl: result.capture.favicon,
+            goal: body.goal,
+            answer: result.answer,
+            resultJson
+          });
+        }
 
         storage.recordRun({
           startedAt: runStartedAt,

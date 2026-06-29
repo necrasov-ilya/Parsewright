@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import type { ReactElement } from "react";
-import { Loader2 } from "lucide-react";
+import { X } from "lucide-react";
 import parsewrightLogoMark from "../assets/parsewright-logo-mark.svg";
 
 export interface BotStage {
@@ -35,10 +35,11 @@ interface ChatFeedProps {
   rounds: ChatRound[];
   anyLoading: boolean;
   onGoalSubmit: (goal: string) => void;
+  onCancel: () => void;
 }
 
 export function ChatFeed({
-  url, domain, faviconUrl, rounds, anyLoading, onGoalSubmit
+  url, domain, faviconUrl, rounds, anyLoading, onGoalSubmit, onCancel
 }: ChatFeedProps): ReactElement {
   const [goalText, setGoalText] = useState("");
   const feedRef = useRef<HTMLDivElement>(null);
@@ -85,19 +86,25 @@ export function ChatFeed({
           rows={1}
           disabled={anyLoading}
         />
-        <button
-          className="chat-feed__send"
-          onClick={() => {
-            if (goalText.trim() && !anyLoading) {
-              onGoalSubmit(goalText);
-              setGoalText("");
-            }
-          }}
-          disabled={!goalText.trim() || anyLoading}
-          aria-label="Отправить"
-        >
-          {anyLoading ? <Loader2 size={18} className="chat-feed__spinner" /> : <span className="chat-feed__send-arrow">↑</span>}
-        </button>
+        {anyLoading ? (
+          <button className="chat-feed__send chat-feed__send--cancel" onClick={onCancel} aria-label="Отменить">
+            <X size={18} />
+          </button>
+        ) : (
+          <button
+            className="chat-feed__send"
+            onClick={() => {
+              if (goalText.trim()) {
+                onGoalSubmit(goalText);
+                setGoalText("");
+              }
+            }}
+            disabled={!goalText.trim()}
+            aria-label="Отправить"
+          >
+            <span className="chat-feed__send-arrow">↑</span>
+          </button>
+        )}
       </div>
     </div>
   );

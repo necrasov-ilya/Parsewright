@@ -890,6 +890,16 @@ button, input, textarea { font: inherit; }
   transform: scale(1.04);
 }
 
+.chat-feed__send--cancel {
+  background: var(--pw-color-surface-elevated);
+  color: var(--pw-color-text-muted);
+}
+
+.chat-feed__send--cancel:hover:not(:disabled) {
+  background: rgba(255, 100, 100, 0.12);
+  color: #ff9b9b;
+}
+
 .chat-feed__send:active:not(:disabled) { transform: scale(0.98); }
 .chat-feed__send:disabled { opacity: 0.3; cursor: default; }
 
@@ -1699,6 +1709,41 @@ button, input, textarea { font: inherit; }
 
 .settings-field--full {
   grid-column: 1 / -1;
+}
+
+.settings-field__secret {
+  position: relative;
+}
+
+.settings-field__secret input {
+  padding-right: 44px;
+}
+
+.settings-field__secret-toggle {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  padding: 0;
+  background: transparent;
+  color: var(--pw-color-text-dim);
+  cursor: pointer;
+}
+
+.settings-field__secret-toggle:hover:not(:disabled) {
+  background: var(--pw-color-surface-soft);
+  color: var(--pw-color-text);
+}
+
+.settings-field__secret-toggle:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 
 @media (max-height: 760px) {
