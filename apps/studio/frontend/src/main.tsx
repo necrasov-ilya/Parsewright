@@ -4,6 +4,7 @@ import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from "
 import { LaunchSplash } from "./components/LaunchSplash";
 import { Onboarding, type OnboardingConfig, type ProviderInfo } from "./components/Onboarding";
 import { Sidebar, type DialogInfo } from "./components/Sidebar";
+import { SettingsModal } from "./components/SettingsModal";
 import { UrlInput } from "./components/UrlInput";
 import { ChatFeed, type ChatRound, type ChatResult } from "./components/ChatFeed";
 import { RightSidebar, type SidebarData } from "./components/RightSidebar";
@@ -120,6 +121,7 @@ function App() {
 
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [rightCollapsed, setRightCollapsed] = useState(true);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const splashDoneRef = useRef(false);
 
@@ -177,6 +179,12 @@ function App() {
   }
 
   async function handleOnboardingComplete(cfg: OnboardingConfig) {
+    await saveConfig(cfg);
+    setConfig(cfg);
+    setPhase("main");
+  }
+
+  async function saveConfig(cfg: OnboardingConfig) {
     window.localStorage.setItem("parsewright.apiKey", cfg.apiKey);
     window.localStorage.setItem("parsewright.baseUrl", cfg.baseUrl);
     window.localStorage.setItem("parsewright.model", cfg.model);
@@ -193,8 +201,11 @@ function App() {
         })
       });
     } catch {}
+  }
+
+  async function handleSettingsSave(cfg: OnboardingConfig) {
+    await saveConfig(cfg);
     setConfig(cfg);
-    setPhase("main");
   }
 
   function handleNewDialog() {
@@ -307,6 +318,7 @@ function App() {
             title: goal.slice(0, 60),
             url: chatUrl,
             domain: chatDomain,
+            faviconUrl: chatFavicon ?? faviconForUrl(chatUrl),
             goal
           })
         });
@@ -368,10 +380,15 @@ function App() {
       .catch(() => {});
   }
 
-  const modelName = config
+  const providerLabel = config
     ? config.useHeuristic
       ? "Heuristic"
       : PROVIDERS.find((p) => p.id === config.provider)?.label ?? config.provider
+    : "";
+  const modelName = config
+    ? config.useHeuristic
+      ? "Без API ключа"
+      : config.model || PROVIDERS.find((p) => p.id === config.provider)?.defaultModel || ""
     : "";
 
   return (
@@ -387,6 +404,8 @@ function App() {
               onDeleteDialog={handleDeleteDialog}
               onNewDialog={handleNewDialog}
               modelName={modelName}
+              providerLabel={providerLabel}
+              onOpenSettings={() => setSettingsOpen(true)}
             />
             <button
               className={`sidebar-toggle sidebar-toggle--left ${leftCollapsed ? "sidebar-toggle--show" : ""}`}
@@ -429,6 +448,15 @@ function App() {
 
       {phase === "greeting" ? (
         <Onboarding providers={PROVIDERS} onComplete={handleOnboardingComplete} />
+      ) : null}
+
+      {settingsOpen && config ? (
+        <SettingsModal
+          providers={PROVIDERS}
+          config={config}
+          onClose={() => setSettingsOpen(false)}
+          onSave={handleSettingsSave}
+        />
       ) : null}
     </div>
   );

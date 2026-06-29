@@ -74,6 +74,9 @@ export async function capturePage(input: CapturePageInput): Promise<PageCapture>
       .first()
       .getAttribute("href")
       .catch(() => undefined);
+    const faviconUrl = favicon
+      ? new URL(favicon, finalUrl).toString()
+      : new URL("/favicon.ico", finalUrl).toString();
 
     return {
       url: input.url,
@@ -82,7 +85,7 @@ export async function capturePage(input: CapturePageInput): Promise<PageCapture>
       title: await page.title(),
       html: await page.content(),
       baseUrl: new URL(finalUrl).origin,
-      favicon: favicon ? new URL(favicon, finalUrl).toString() : undefined,
+      favicon: faviconUrl,
       jsonResponses,
       timingMs: Date.now() - startedAt,
       capturedAt: new Date().toISOString()
