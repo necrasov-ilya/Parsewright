@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ReactElement } from "react";
-import { MessageSquare, Trash2 } from "lucide-react";
+import { Plus, MessageSquare, Trash2 } from "lucide-react";
 import parsewrightLogoFull from "../assets/parsewright-logo-full.svg";
 
 export interface DialogInfo {
@@ -18,23 +18,33 @@ export interface DialogInfo {
 interface SidebarProps {
   dialogs: DialogInfo[];
   activeDialogId: number | null;
+  collapsed: boolean;
   onSelectDialog: (id: number) => void;
   onDeleteDialog: (id: number) => void;
+  onNewDialog: () => void;
+  modelName: string;
 }
 
-export function Sidebar({ dialogs, activeDialogId, onSelectDialog, onDeleteDialog }: SidebarProps): ReactElement {
+export function Sidebar({
+  dialogs, activeDialogId, collapsed, onSelectDialog, onDeleteDialog, onNewDialog, modelName
+}: SidebarProps): ReactElement {
+  if (collapsed) return <></>;
   return (
     <aside className="sidebar">
       <div className="sidebar__logo">
         <img src={parsewrightLogoFull} alt="Parsewright" className="sidebar__logo-img" />
       </div>
 
+      <button className="sidebar__new-dialog" onClick={onNewDialog}>
+        <Plus size={16} />
+        <span>Новый диалог</span>
+      </button>
+
       <div className="sidebar__section">
         <div className="sidebar__label">
           <MessageSquare size={14} />
-          <span>Недавние диалоги</span>
+          <span>История</span>
         </div>
-
         <div className="sidebar__dialogs">
           {dialogs.length === 0 ? (
             <p className="sidebar__empty">Пока нет диалогов</p>
@@ -50,6 +60,11 @@ export function Sidebar({ dialogs, activeDialogId, onSelectDialog, onDeleteDialo
             ))
           )}
         </div>
+      </div>
+
+      <div className="sidebar__footer">
+        <span className="sidebar__model-dot" />
+        <span className="sidebar__model-name">{modelName}</span>
       </div>
     </aside>
   );
@@ -75,14 +90,9 @@ function DialogCard({ dialog, active, onSelect, onDelete }: {
     }
   }, [dialog.favicon_url, dialog.accent_color]);
 
-  const gradient = accentColor
-    ? `linear-gradient(135deg, ${accentColor}22, ${accentColor}08)`
-    : "linear-gradient(135deg, rgba(255,255,255,0.04), rgba(255,255,255,0.01))";
-
   return (
     <div
       className={`dialog-card ${active ? "dialog-card--active" : ""}`}
-      style={{ background: gradient }}
       onClick={onSelect}
     >
       <div className="dialog-card__header">
@@ -91,7 +101,7 @@ function DialogCard({ dialog, active, onSelect, onDelete }: {
         ) : (
           <div
             className="dialog-card__favicon-placeholder"
-            style={accentColor ? { background: `${accentColor}44` } : undefined}
+            style={accentColor ? { background: `${accentColor}33` } : undefined}
           >
             {dialog.domain.charAt(0).toUpperCase()}
           </div>
@@ -102,12 +112,9 @@ function DialogCard({ dialog, active, onSelect, onDelete }: {
           onClick={(e) => { e.stopPropagation(); onDelete(); }}
           title="Удалить"
         >
-          <Trash2 size={13} />
+          <Trash2 size={12} />
         </button>
       </div>
-      <a href={dialog.url} className="dialog-card__url" onClick={(e) => e.stopPropagation()} title={dialog.url}>
-        {dialog.url}
-      </a>
       <p className="dialog-card__title">{dialog.title}</p>
     </div>
   );

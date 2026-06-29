@@ -1,9 +1,12 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { ArrowUp, Loader2, Sparkles } from "lucide-react";
+import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from "lucide-react";
 import { LaunchSplash } from "./components/LaunchSplash";
 import { Onboarding, type OnboardingConfig, type ProviderInfo } from "./components/Onboarding";
 import { Sidebar, type DialogInfo } from "./components/Sidebar";
+import { UrlInput } from "./components/UrlInput";
+import { ChatFeed, type ChatRound, type ChatResult } from "./components/ChatFeed";
+import { RightSidebar, type SidebarData } from "./components/RightSidebar";
 import "./styles.css";
 
 declare global {
@@ -33,31 +36,14 @@ interface ExtractInput {
 interface ExtractResult {
   answer: string;
   data: Record<string, unknown>;
-  strategy: {
-    kind: "fields" | "collection" | "summary";
-    fields?: string[];
-    ranking?: { objective: string; topK: number };
-  };
+  strategy: { kind: "fields" | "collection" | "summary"; fields?: string[] };
   table: Array<Record<string, unknown>>;
-  bestItem?: Record<string, unknown>;
-  verification: {
-    answersGoal: boolean;
-    answer: string;
-    title: string;
-    issues: string[];
-  };
+  verification: { answersGoal: boolean; answer: string; title: string; issues: string[] };
   validation: {
     page: { ok: boolean; issues: Array<{ code: string; message: string }> };
     data: { ok: boolean; issues: Array<{ field?: string; code: string; message: string }> };
   };
-  capture: {
-    url: string;
-    finalUrl: string;
-    status?: number;
-    title: string;
-    favicon?: string;
-    timingMs: number;
-  };
+  capture: { url: string; finalUrl: string; title: string; favicon?: string; status?: number; timingMs: number };
   manifest: Record<string, unknown>;
   repaired: boolean;
   dialogId?: number;
@@ -89,27 +75,60 @@ const PROVIDERS: ProviderInfo[] = [
 ];
 
 type AppPhase = "splash" | "greeting" | "main";
+type CenterState = "url-input" | "chat";
 
-function isValidUrl(value: string): boolean {
+const STAGE_DEFS: Array<{ id: string; text: string }> = [
+  { id: "capture", text: "Позвольте мне открыть страницу…" },
+  { id: "page_reduction", text: "Изучаю структуру страницы…" },
+  { id: "strategy", text: "Понял задачу. Определяю стратегию извлечения…" },
+  { id: "manifest", text: "Составляю алгоритм извлечения…" },
+  { id: "runner", text: "Применяю алгоритм…" },
+  { id: "validation", text: "Проверяю результат…" },
+  { id: "verify", text: "Формирую ответ…" }
+];
+
+function extractDomain(url: string): string {
   try {
-    const u = new URL(value);
-    return u.protocol === "http:" || u.protocol === "https:";
+    const u = new URL(url);
+    return u.hostname.replace(/^www\./, "");
   } catch {
-    return false;
+    return url;
   }
+}
+
+function faviconForUrl(url: string): string {
+  const domain = extractDomain(url);
+  return `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
 }
 
 function App() {
   const [phase, setPhase] = useState<AppPhase>("splash");
   const [shellVisible, setShellVisible] = useState(false);
-  const [sessionKey, setSessionKey] = useState(0);
-  const [resetting, setResetting] = useState(false);
-  const [config, setConfig] = useState<OnboardingConfig | null>(null);
   const [onboardingChecked, setOnboardingChecked] = useState(false);
+  const [config, setConfig] = useState<OnboardingConfig | null>(null);
+
+  const [centerState, setCenterState] = useState<CenterState>("url-input");
+  const [chatUrl, setChatUrl] = useState("");
+  const [chatDomain, setChatDomain] = useState("");
+  const [chatFavicon, setChatFavicon] = useState<string | null>(null);
+  const [rounds, setRounds] = useState<ChatRound[]>([]);
+  const [anyLoading, setAnyLoading] = useState(false);
+  const [sidebarData, setSidebarData] = useState<SidebarData | null>(null);
+
   const [dialogs, setDialogs] = useState<DialogInfo[]>([]);
   const [activeDialogId, setActiveDialogId] = useState<number | null>(null);
-  const [currentResult, setCurrentResult] = useState<ExtractResult | null>(null);
+
+  const [leftCollapsed, setLeftCollapsed] = useState(false);
+  const [rightCollapsed, setRightCollapsed] = useState(true);
+
   const splashDoneRef = useRef(false);
+
+  const refreshDialogs = useCallback(() => {
+    fetch(`${SIDECAR}/dialogs`)
+      .then((r) => r.json())
+      .then((data) => { if (data.dialogs) setDialogs(data.dialogs); })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (phase !== "splash") return;
@@ -139,60 +158,21 @@ function App() {
 
   useEffect(() => {
     if (onboardingChecked && splashDoneRef.current && phase === "splash") {
-      if (config) {
-        setPhase("main");
-        refreshDialogs();
-      } else {
-        setPhase("greeting");
-      }
+      setPhase(config ? "main" : "greeting");
     }
   }, [onboardingChecked, config, phase]);
 
-  const refreshDialogs = useCallback(() => {
-    fetch(`${SIDECAR}/dialogs`)
-      .then((r) => r.json())
-      .then((data) => { if (data.dialogs) setDialogs(data.dialogs); })
-      .catch(() => {});
-  }, []);
-
-  const resetApp = useCallback(async () => {
-    setResetting(true);
-    setShellVisible(false);
-    setPhase("splash");
-    setSessionKey((key) => key + 1);
-    setConfig(null);
-    setDialogs([]);
-    setActiveDialogId(null);
-    setCurrentResult(null);
-    splashDoneRef.current = false;
-    window.localStorage.removeItem("parsewright.apiKey");
-    window.localStorage.removeItem("parsewright.baseUrl");
-    window.localStorage.removeItem("parsewright.model");
-    try { await window.go?.main?.App?.Reset(); } catch {}
-    setResetting(false);
-  }, []);
-
   useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.ctrlKey && event.shiftKey && event.key === "R") {
-        event.preventDefault();
-        event.stopPropagation();
-        resetApp();
-      }
+    if (phase === "main" && config) {
+      refreshDialogs();
     }
-    window.addEventListener("keydown", handleKeyDown, true);
-    return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [resetApp]);
+  }, [phase, config]);
 
   function handleSplashComplete() {
     splashDoneRef.current = true;
     if (onboardingChecked) {
-      if (config) {
-        setPhase("main");
-        refreshDialogs();
-      } else {
-        setPhase("greeting");
-      }
+      setPhase(config ? "main" : "greeting");
+      if (config) refreshDialogs();
     }
   }
 
@@ -217,22 +197,165 @@ function App() {
     setPhase("main");
   }
 
+  function handleNewDialog() {
+    setCenterState("url-input");
+    setChatUrl("");
+    setChatDomain("");
+    setChatFavicon(null);
+    setRounds([]);
+    setSidebarData(null);
+    setActiveDialogId(null);
+    setRightCollapsed(true);
+  }
+
+  function handleUrlSubmit(url: string) {
+    const domain = extractDomain(url);
+    setChatUrl(url);
+    setChatDomain(domain);
+    setChatFavicon(faviconForUrl(url));
+    setRounds([]);
+    setSidebarData(null);
+    setCenterState("chat");
+    setRightCollapsed(false);
+  }
+
+  function updateRound(roundId: string, patch: Partial<ChatRound>) {
+    setRounds((prev) => prev.map((r) => r.id === roundId ? { ...r, ...patch } : r));
+  }
+
+  async function handleGoalSubmit(goal: string) {
+    if (!config || anyLoading) return;
+
+    const roundId = `round-${Date.now()}`;
+
+    const initialStages = STAGE_DEFS.map((s) => ({ ...s, status: "typing" as const }));
+
+    setRounds((prev) => [...prev, {
+      id: roundId,
+      goal,
+      stages: initialStages,
+      result: null,
+      error: null,
+      loading: true
+    }]);
+    setAnyLoading(true);
+
+    const api = window.go?.main?.App;
+    const apiPromise = api ? api.Extract({
+      url: chatUrl,
+      goal,
+      provider: config.useHeuristic ? "heuristic" : config.provider,
+      baseUrl: config.baseUrl,
+      model: config.model,
+      apiKey: config.apiKey,
+      maxItems: 100,
+      mode: "auto"
+    }) : Promise.reject(new Error("Wails bridge is not available."));
+
+    for (let i = 0; i < STAGE_DEFS.length; i++) {
+      const stage = STAGE_DEFS[i];
+      await sleep(stage.text.length * 22 + 250);
+      setRounds((prev) => prev.map((r) =>
+        r.id === roundId
+          ? { ...r, stages: r.stages.map((s, idx) => idx <= i ? { ...s, status: "done" as const } : s) }
+          : r
+      ));
+    }
+
+    try {
+      const response = await apiPromise;
+
+      const chatResult: ChatResult = {
+        answer: response.answer,
+        strategy: response.strategy,
+        data: response.data,
+        table: response.table,
+        verification: response.verification,
+        repaired: response.repaired,
+        dialogId: response.dialogId
+      };
+
+      updateRound(roundId, {
+        result: chatResult,
+        loading: false,
+        stages: STAGE_DEFS.map((s) => ({ ...s, status: "done" as const }))
+      });
+
+      setSidebarData({
+        capture: response.capture,
+        manifest: response.manifest,
+        strategy: response.strategy,
+        validation: response.validation,
+        verification: response.verification,
+        repaired: response.repaired
+      });
+
+      if (response.capture?.favicon) {
+        setChatFavicon(response.capture.favicon);
+      }
+
+      if (response.dialogId) {
+        setActiveDialogId(response.dialogId);
+        refreshDialogs();
+      }
+    } catch (err) {
+      try {
+        await fetch(`${SIDECAR}/dialogs`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            title: goal.slice(0, 60),
+            url: chatUrl,
+            domain: chatDomain,
+            goal
+          })
+        });
+        refreshDialogs();
+      } catch {}
+
+      updateRound(roundId, {
+        error: err instanceof Error ? err.message : String(err),
+        loading: false,
+        stages: STAGE_DEFS.map((s) => ({ ...s, status: "done" as const }))
+      });
+    } finally {
+      setAnyLoading(false);
+    }
+  }
+
   function handleSelectDialog(id: number) {
     setActiveDialogId(id);
     const dialog = dialogs.find((d) => d.id === id);
-    if (dialog?.answer) {
-      setCurrentResult({
-        answer: dialog.answer,
-        data: {},
-        strategy: { kind: "fields" },
-        table: [],
-        verification: { answersGoal: true, answer: dialog.answer, title: dialog.title, issues: [] },
-        validation: { page: { ok: true, issues: [] }, data: { ok: true, issues: [] } },
-        capture: { url: dialog.url, finalUrl: dialog.url, title: dialog.title, timingMs: 0 },
-        manifest: {},
-        repaired: false,
-        dialogId: id
-      });
+    if (dialog) {
+      setChatUrl(dialog.url);
+      setChatDomain(dialog.domain);
+      setChatFavicon(dialog.favicon_url);
+      setSidebarData(null);
+      setRounds(dialog.answer ? [{
+        id: `dialog-${dialog.id}`,
+        goal: dialog.goal,
+        stages: [],
+        result: {
+          answer: dialog.answer,
+          strategy: { kind: "fields" },
+          data: {},
+          table: [],
+          verification: { answersGoal: true, issues: [] },
+          repaired: false,
+          dialogId: dialog.id
+        },
+        error: null,
+        loading: false
+      }] : [{
+        id: `dialog-${dialog.id}`,
+        goal: dialog.goal,
+        stages: [],
+        result: null,
+        error: null,
+        loading: false
+      }]);
+      setCenterState("chat");
+      setRightCollapsed(false);
     }
   }
 
@@ -240,297 +363,79 @@ function App() {
     fetch(`${SIDECAR}/dialogs/${id}`, { method: "DELETE" })
       .then(() => {
         setDialogs((prev) => prev.filter((d) => d.id !== id));
-        if (activeDialogId === id) {
-          setActiveDialogId(null);
-          setCurrentResult(null);
-        }
+        if (activeDialogId === id) handleNewDialog();
       })
       .catch(() => {});
   }
 
-  function handleExtractComplete(result: ExtractResult) {
-    setCurrentResult(result);
-    if (result.dialogId) {
-      setActiveDialogId(result.dialogId);
-      refreshDialogs();
-    }
-  }
+  const modelName = config
+    ? config.useHeuristic
+      ? "Heuristic"
+      : PROVIDERS.find((p) => p.id === config.provider)?.label ?? config.provider
+    : "";
 
   return (
     <div className="app-root">
       <div className={shellVisible ? "app-root__shell app-root__shell--visible" : "app-root__shell"}>
         {phase === "main" && config ? (
-          <MainLayout
-            key={sessionKey}
-            config={config}
-            dialogs={dialogs}
-            activeDialogId={activeDialogId}
-            onSelectDialog={handleSelectDialog}
-            onDeleteDialog={handleDeleteDialog}
-            onExtractComplete={handleExtractComplete}
-          />
+          <div className="app-layout">
+            <Sidebar
+              dialogs={dialogs}
+              activeDialogId={activeDialogId}
+              collapsed={leftCollapsed}
+              onSelectDialog={handleSelectDialog}
+              onDeleteDialog={handleDeleteDialog}
+              onNewDialog={handleNewDialog}
+              modelName={modelName}
+            />
+            <button
+              className={`sidebar-toggle sidebar-toggle--left ${leftCollapsed ? "sidebar-toggle--show" : ""}`}
+              onClick={() => setLeftCollapsed((v) => !v)}
+              aria-label={leftCollapsed ? "Показать панель" : "Скрыть панель"}
+            >
+              {leftCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+            </button>
+
+            <main className="app-center">
+              {centerState === "url-input" ? (
+                <UrlInput onSubmit={handleUrlSubmit} />
+              ) : (
+                <ChatFeed
+                  url={chatUrl}
+                  domain={chatDomain}
+                  faviconUrl={chatFavicon}
+                  rounds={rounds}
+                  anyLoading={anyLoading}
+                  onGoalSubmit={handleGoalSubmit}
+                />
+              )}
+            </main>
+
+            <button
+              className={`sidebar-toggle sidebar-toggle--right ${rightCollapsed ? "sidebar-toggle--show" : ""}`}
+              onClick={() => setRightCollapsed((v) => !v)}
+              aria-label={rightCollapsed ? "Показать панель" : "Скрыть панель"}
+            >
+              {rightCollapsed ? <PanelRightOpen size={16} /> : <PanelRightClose size={16} />}
+            </button>
+            <RightSidebar collapsed={rightCollapsed} data={sidebarData} />
+          </div>
         ) : null}
       </div>
 
-      {phase === "splash" || resetting ? (
-        <LaunchSplash key={sessionKey} onComplete={handleSplashComplete} />
+      {phase === "splash" ? (
+        <LaunchSplash key="splash" onComplete={handleSplashComplete} />
       ) : null}
 
-      {phase === "greeting" && !resetting ? (
+      {phase === "greeting" ? (
         <Onboarding providers={PROVIDERS} onComplete={handleOnboardingComplete} />
       ) : null}
     </div>
   );
 }
 
-function MainLayout({ config, dialogs, activeDialogId, onSelectDialog, onDeleteDialog, onExtractComplete }: {
-  config: OnboardingConfig;
-  dialogs: DialogInfo[];
-  activeDialogId: number | null;
-  onSelectDialog: (id: number) => void;
-  onDeleteDialog: (id: number) => void;
-  onExtractComplete: (result: ExtractResult) => void;
-}) {
-  return (
-    <div className="main-layout">
-      <Sidebar
-        dialogs={dialogs}
-        activeDialogId={activeDialogId}
-        onSelectDialog={onSelectDialog}
-        onDeleteDialog={onDeleteDialog}
-      />
-      <MainContent config={config} onExtractComplete={onExtractComplete} activeDialogId={activeDialogId} dialogs={dialogs} />
-    </div>
-  );
-}
-
-function MainContent({ config, onExtractComplete, activeDialogId, dialogs }: {
-  config: OnboardingConfig;
-  onExtractComplete: (result: ExtractResult) => void;
-  activeDialogId: number | null;
-  dialogs: DialogInfo[];
-}) {
-  const [url, setUrl] = useState("");
-  const [goal, setGoal] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<ExtractResult | null>(null);
-  const [status, setStatus] = useState<string>("");
-  const [urlTouched, setUrlTouched] = useState(false);
-  const [creating, setCreating] = useState(false);
-
-  const urlValid = isValidUrl(url);
-  const showUrlError = urlTouched && url.length > 0 && !urlValid;
-  const canSubmit = urlValid && goal.trim().length > 0 && !loading;
-
-  useEffect(() => {
-    if (activeDialogId) {
-      const dialog = dialogs.find((d) => d.id === activeDialogId);
-      if (dialog) {
-        setResult({
-          answer: dialog.answer ?? "",
-          data: {},
-          strategy: { kind: "fields" },
-          table: [],
-          verification: { answersGoal: true, answer: dialog.answer ?? "", title: dialog.title, issues: [] },
-          validation: { page: { ok: true, issues: [] }, data: { ok: true, issues: [] } },
-          capture: { url: dialog.url, finalUrl: dialog.url, title: dialog.title, timingMs: 0 },
-          manifest: {},
-          repaired: false,
-          dialogId: dialog.id
-        });
-      }
-    } else {
-      setResult(null);
-    }
-  }, [activeDialogId, dialogs]);
-
-  async function extract() {
-    if (!canSubmit) return;
-    setUrlTouched(true);
-    if (!urlValid) return;
-
-    setCreating(true);
-    setLoading(true);
-    setError(null);
-    setResult(null);
-    setStatus("capture");
-
-    try {
-      const api = window.go?.main?.App;
-      if (!api) throw new Error("Wails bridge is not available.");
-
-      setStatus("analyzing");
-      const response = await api.Extract({
-        url,
-        goal,
-        provider: config.useHeuristic ? "heuristic" : config.provider,
-        baseUrl: config.baseUrl,
-        model: config.model,
-        apiKey: config.apiKey,
-        maxItems: 2000,
-        mode: "auto"
-      });
-
-      setStatus("answer");
-      setResult(response);
-      onExtractComplete(response);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
-      setCreating(false);
-      window.setTimeout(() => setStatus(""), 1000);
-    }
-  }
-
-  function handleKeyDown(e: React.KeyboardEvent) {
-    if (e.key === "Enter" && !e.shiftKey && canSubmit) {
-      e.preventDefault();
-      extract();
-    }
-  }
-
-  return (
-    <main className="main-content">
-      {!result && !loading ? (
-        <div className="main-content__welcome">
-          <Sparkles size={32} className="main-content__welcome-icon" />
-          <h2 className="main-content__welcome-title">Что нужно со страницы?</h2>
-          <p className="main-content__welcome-subtitle">Вставьте ссылку и опишите, что хотите извлечь</p>
-        </div>
-      ) : null}
-
-      {loading ? (
-        <div className="main-content__loading">
-          <Loader2 size={28} className="main-content__spinner" />
-          <p className="main-content__status">
-            {status === "capture" ? "Открываю страницу..." :
-             status === "analyzing" ? "Анализирую содержимое..." :
-             "Формирую ответ..."}
-          </p>
-        </div>
-      ) : null}
-
-      {error ? <div className="main-content__error">{error}</div> : null}
-
-      {result && !loading ? <ResultView result={result} /> : null}
-
-      <div className="input-bar">
-        <div className="input-bar__url">
-          <input
-            type="text"
-            value={url}
-            onChange={(e) => { setUrl(e.target.value); setUrlTouched(true); }}
-            onKeyDown={handleKeyDown}
-            placeholder="https://example.com"
-            className={`input-bar__input ${showUrlError ? "input-bar__input--error" : ""}`}
-            disabled={loading}
-          />
-        </div>
-        <textarea
-          value={goal}
-          onChange={(e) => setGoal(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="Что нужно извлечь?"
-          className="input-bar__goal"
-          disabled={loading}
-          rows={1}
-        />
-        <button
-          className="input-bar__submit"
-          onClick={extract}
-          disabled={!canSubmit}
-        >
-          {loading ? <Loader2 size={18} className="main-content__spinner" /> : <ArrowUp size={18} />}
-        </button>
-      </div>
-      {showUrlError ? <p className="input-bar__url-error">Введите корректную ссылку (http:// или https://)</p> : null}
-    </main>
-  );
-}
-
-function ResultView({ result }: { result: ExtractResult }) {
-  const kind = result.strategy.kind;
-
-  return (
-    <div className={`result-view ${result.dialogId ? "result-view--animate" : ""}`}>
-      {result.repaired ? <p className="result-view__repaired">Сайт изменился — алгоритм обновлён.</p> : null}
-      {!result.verification.answersGoal ? (
-        <p className="result-view__warning">{result.verification.issues.join(" ") || "Данные могут не полностью отвечать на запрос."}</p>
-      ) : null}
-
-      <div className="result-view__answer">
-        <p className="result-view__answer-text">{result.answer}</p>
-      </div>
-
-      {kind === "fields" ? <FieldsTable data={result.data} /> : null}
-      {kind === "collection" && result.table.length > 0 ? <CollectionTable table={result.table} /> : null}
-      {kind === "summary" ? <SummaryView data={result.data} /> : null}
-
-      <details className="result-view__details">
-        <summary>Диагностика</summary>
-        <pre>{JSON.stringify({ strategy: result.strategy, validation: result.validation, capture: result.capture }, null, 2)}</pre>
-      </details>
-    </div>
-  );
-}
-
-function FieldsTable({ data }: { data: Record<string, unknown> }) {
-  const entries = Object.entries(data).filter(([, v]) => v !== null && v !== undefined && v !== "");
-  if (entries.length === 0) return <p className="result-view__warning">Не удалось извлечь поля.</p>;
-  return (
-    <div className="result-view__table-wrap">
-      <table>
-        <thead><tr><th>Поле</th><th>Значение</th></tr></thead>
-        <tbody>
-          {entries.map(([k, v], i) => <tr key={i}><td>{k}</td><td>{Array.isArray(v) ? `${v.length} items` : String(v)}</td></tr>)}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function CollectionTable({ table }: { table: Array<Record<string, unknown>> }) {
-  if (table.length === 0) return <p className="result-view__warning">Не найдено элементов.</p>;
-  const columns = Object.keys(table[0]).filter((k) => k !== "raw");
-  return (
-    <div className="result-view__table-wrap">
-      <table>
-        <thead><tr>{columns.map((c) => <th key={c}>{c}</th>)}</tr></thead>
-        <tbody>
-          {table.slice(0, 50).map((row, i) => (
-            <tr key={i}>
-              {columns.map((c) => (
-                <td key={c}>{c === "url" && typeof row[c] === "string" ? <a href={String(row[c])}>{String(row[c])}</a> : formatCell(row[c])}</td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function SummaryView({ data }: { data: Record<string, unknown> }) {
-  const entries = Object.entries(data).filter(([, v]) => v !== null && v !== undefined && v !== "");
-  if (entries.length === 0) return null;
-  return (
-    <div className="result-view__table-wrap">
-      <table>
-        <thead><tr><th>Ключ</th><th>Значение</th></tr></thead>
-        <tbody>
-          {entries.map(([k, v], i) => <tr key={i}><td>{k}</td><td>{Array.isArray(v) ? `${v.length} items` : String(v)}</td></tr>)}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function formatCell(value: unknown): string {
-  if (value === null || value === undefined) return "";
-  if (typeof value === "number") return String(value);
-  return String(value);
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 createRoot(document.getElementById("root")!).render(<App />);

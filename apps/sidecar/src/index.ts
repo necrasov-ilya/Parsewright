@@ -16,6 +16,16 @@ const storage = new ParsewrightStorage(dataDir);
 
 const server = http.createServer(async (req, res) => {
   try {
+    if (req.method === "OPTIONS") {
+      res.writeHead(204, {
+        "access-control-allow-origin": "*",
+        "access-control-allow-methods": "GET, POST, DELETE, PATCH, OPTIONS",
+        "access-control-allow-headers": "content-type"
+      });
+      res.end();
+      return;
+    }
+
     if (req.method === "GET" && req.url === "/health") {
       return json(res, 200, { ok: true, version: sidecarVersion, pid: process.pid, startedAt, workspaceRoot, dataDir });
     }
@@ -197,7 +207,12 @@ server.listen(port, "127.0.0.1", () => {
 });
 
 function json(res: http.ServerResponse, status: number, value: unknown) {
-  res.writeHead(status, { "content-type": "application/json" });
+  res.writeHead(status, {
+    "content-type": "application/json",
+    "access-control-allow-origin": "*",
+    "access-control-allow-methods": "GET, POST, DELETE, PATCH, OPTIONS",
+    "access-control-allow-headers": "content-type"
+  });
   res.end(JSON.stringify(value));
 }
 
